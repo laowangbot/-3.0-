@@ -367,6 +367,12 @@ class TelegramBot:
                 await self._handle_edit_pair_source(callback_query)
             elif data.startswith("edit_target:"):
                 await self._handle_edit_pair_target(callback_query)
+            elif data.startswith("edit_source_by_id:"):
+                await self._handle_edit_pair_source_by_id(callback_query)
+            elif data.startswith("edit_target_by_id:"):
+                await self._handle_edit_pair_target_by_id(callback_query)
+            elif data.startswith("toggle_enabled_by_id:"):
+                await self._handle_toggle_enabled_by_id(callback_query)
             elif data.startswith("multi_select_pair:"):
                 await self._handle_multi_select_pair(callback_query)
             elif data == "multi_set_message_ranges":
@@ -504,6 +510,8 @@ class TelegramBot:
                 await self._handle_view_all_tasks(callback_query)
             elif data.startswith("confirm_delete:"):
                 await self._handle_confirm_delete_channel_pair(callback_query)
+            elif data.startswith("confirm_delete_by_id:"):
+                await self._handle_confirm_delete_channel_pair_by_id(callback_query)
             elif data == "clear_all_channels":
                 await self._handle_clear_all_channels(callback_query)
             else:
@@ -2718,28 +2726,60 @@ class TelegramBot:
     async def _handle_edit_channel_pair(self, callback_query: CallbackQuery):
         """处理编辑频道组"""
         try:
-            # 解析频道组索引
-            pair_index = int(callback_query.data.split(':')[1])
+            user_id = str(callback_query.from_user.id)
+            data_part = callback_query.data.split(':')[1]
+            
+            # 判断是索引格式还是pair_id格式
+            if data_part.isdigit():
+                # 索引格式：edit_channel_pair:0
+                pair_index = int(data_part)
+                channel_pairs = await get_channel_pairs(user_id)
+                
+                if pair_index >= len(channel_pairs):
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+                
+                pair = channel_pairs[pair_index]
+                pair_id = pair.get('id', f'pair_{pair_index}')
+            else:
+                # pair_id格式：edit_channel_pair:pair_0_1756487581
+                pair_id = data_part
+                channel_pairs = await get_channel_pairs(user_id)
+                
+                # 查找对应的频道组
+                pair = None
+                pair_index = None
+                for i, p in enumerate(channel_pairs):
+                    if p.get('id') == pair_id:
+                        pair = p
+                        pair_index = i
+                        break
+                
+                if not pair:
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+            
+            source_name = pair.get('source_name', '未知频道')
+            target_name = pair.get('target_name', '未知频道')
             
             edit_text = f"""
 ✏️ **编辑频道组 {pair_index + 1}**
 
-📝 **请选择要编辑的内容：**
+📋 **当前配置：**
+📥 来源频道：{source_name}
+📤 目标频道：{target_name}
 
-1. 更改来源频道
-2. 更改目标频道
-3. 启用/禁用频道组
-4. 管理过滤设置
+📝 **请选择要编辑的内容：**
 
 💡 请选择操作：
             """.strip()
             
-            # 生成编辑按钮
+            # 生成编辑按钮，使用pair_id格式确保一致性
             buttons = [
-                [("🔄 更改来源频道", f"edit_source:{pair_index}")],
-                [("🔄 更改目标频道", f"edit_target:{pair_index}")],
-                [("✅ 启用/禁用", f"toggle_enabled:{pair_index}")],
-                [("🔧 过滤设置", f"edit_filters:{pair_index}")],
+                [("🔄 更改来源频道", f"edit_source_by_id:{pair_id}")],
+                [("🔄 更改目标频道", f"edit_target_by_id:{pair_id}")],
+                [("✅ 启用/禁用", f"toggle_enabled_by_id:{pair_id}")],
+                [("🔧 过滤设置", f"manage_pair_filters:{pair_id}")],
                 [("🔙 返回频道管理", "show_channel_config_menu")]
             ]
             
@@ -2755,8 +2795,31 @@ class TelegramBot:
     async def _handle_delete_channel_pair(self, callback_query: CallbackQuery):
         """处理删除频道组"""
         try:
-            # 解析频道组索引
-            pair_index = int(callback_query.data.split(':')[1])
+            user_id = str(callback_query.from_user.id)
+            data_part = callback_query.data.split(':')[1]
+            
+            # 检查是否为pair_id格式
+            if data_part.startswith('pair_'):
+                # 通过pair_id查找频道组
+                channel_pairs = await get_channel_pairs(user_id)
+                pair_index = None
+                pair_id = data_part
+                for i, pair in enumerate(channel_pairs):
+                    if pair.get('id') == data_part:
+                        pair_index = i
+                        break
+                if pair_index is None:
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+            else:
+                # 传统的索引格式
+                pair_index = int(data_part)
+                # 获取pair_id用于确认删除
+                channel_pairs = await get_channel_pairs(user_id)
+                if pair_index >= len(channel_pairs):
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+                pair_id = channel_pairs[pair_index].get('id', f'pair_{pair_index}_{int(time.time())}')
             
             delete_text = f"""
 🗑️ **删除频道组 {pair_index + 1}**
@@ -2770,7 +2833,7 @@ class TelegramBot:
             # 生成确认按钮
             buttons = [
                 [("❌ 取消", "show_channel_config_menu")],
-                [("🗑️ 确认删除", f"confirm_delete:{pair_index}")]
+                [("🗑️ 确认删除", f"confirm_delete_by_id:{pair_id}")]
             ]
             
             await callback_query.edit_message_text(
@@ -2802,6 +2865,77 @@ class TelegramBot:
             success = await data_manager.delete_channel_pair(user_id, pair['id'])
             
             # 监听系统已移除，无需清理相关配置
+            
+            if success:
+                # 显示删除成功消息
+                success_text = f"""
+🗑️ **频道组删除成功！**
+
+📡 **采集频道：** {source_name}
+📤 **发布频道：** {target_name}
+
+✅ **状态：** 已永久删除
+
+💡 **说明：**
+• 该频道组已被永久删除
+• 无法恢复，如需重新使用请重新添加
+• 相关的过滤配置已清除
+• 相关的监听配置已清除
+
+🔙 返回主菜单继续其他操作
+                """.strip()
+                
+                await callback_query.edit_message_text(
+                    success_text,
+                    reply_markup=generate_button_layout([[
+                        ("🔙 返回主菜单", "show_main_menu")
+                    ]])
+                )
+            else:
+                # 显示删除失败消息
+                await callback_query.edit_message_text(
+                    f"❌ **删除失败！**\n\n"
+                    f"📡 **采集频道：** {source_name}\n"
+                    f"📤 **发布频道：** {target_name}\n\n"
+                    f"💡 **可能的原因：**\n"
+                    f"• 数据库操作失败\n"
+                    f"• 权限不足\n"
+                    f"• 系统错误\n\n"
+                    f"🔙 请稍后重试或联系管理员",
+                    reply_markup=generate_button_layout([[
+                        ("🔙 返回主菜单", "show_main_menu")
+                    ]])
+                )
+            
+        except Exception as e:
+            logger.error(f"处理确认删除频道组失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+
+    async def _handle_confirm_delete_channel_pair_by_id(self, callback_query: CallbackQuery):
+        """处理通过pair_id确认删除频道组"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            pair_id = callback_query.data.split(':')[1]
+            
+            # 获取频道组信息
+            channel_pairs = await get_channel_pairs(user_id)
+            pair = None
+            pair_index = None
+            for i, p in enumerate(channel_pairs):
+                if p.get('id') == pair_id:
+                    pair = p
+                    pair_index = i
+                    break
+            
+            if not pair:
+                await callback_query.edit_message_text("❌ 频道组不存在")
+                return
+            
+            source_name = pair.get('source_name', f'频道{pair_index+1}')
+            target_name = pair.get('target_name', f'目标{pair_index+1}')
+            
+            # 删除频道组（data_manager.delete_channel_pair已经包含了配置清理逻辑）
+            success = await data_manager.delete_channel_pair(user_id, pair_id)
             
             if success:
                 # 显示删除成功消息
@@ -2936,6 +3070,152 @@ class TelegramBot:
             
         except Exception as e:
             logger.error(f"处理编辑目标频道失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+
+    async def _handle_edit_pair_source_by_id(self, callback_query: CallbackQuery):
+        """处理通过pair_id编辑频道组来源频道"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            pair_id = callback_query.data.split(':')[1]
+            
+            # 获取频道组信息
+            channel_pairs = await get_channel_pairs(user_id)
+            pair = None
+            pair_index = None
+            for i, p in enumerate(channel_pairs):
+                if p.get('id') == pair_id:
+                    pair = p
+                    pair_index = i
+                    break
+            
+            if not pair:
+                await callback_query.edit_message_text("❌ 频道组不存在")
+                return
+            
+            edit_text = f"""
+🔄 **更改来源频道**
+
+📝 **频道组 {pair_index + 1}**
+📥 **当前来源：** {pair.get('source_name', '未知频道')}
+
+💡 **操作说明：**
+• 请发送新的来源频道链接或用户名
+• 支持格式：@channel_username 或 https://t.me/channel_username
+• 确保您有该频道的访问权限
+
+📤 **请发送新的来源频道：**
+            """.strip()
+            
+            # 设置用户状态为等待输入来源频道
+            self.user_states[user_id] = {
+                'state': f'edit_source_by_id:{pair_id}',
+                'pair_id': pair_id,
+                'pair_index': pair_index
+            }
+            
+            buttons = [
+                [("🔙 取消操作", f"edit_channel_pair:{pair_id}")]
+            ]
+            
+            await callback_query.edit_message_text(
+                edit_text,
+                reply_markup=generate_button_layout(buttons)
+            )
+            
+        except Exception as e:
+            logger.error(f"处理编辑来源频道失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+
+    async def _handle_edit_pair_target_by_id(self, callback_query: CallbackQuery):
+        """处理通过pair_id编辑频道组目标频道"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            pair_id = callback_query.data.split(':')[1]
+            
+            # 获取频道组信息
+            channel_pairs = await get_channel_pairs(user_id)
+            pair = None
+            pair_index = None
+            for i, p in enumerate(channel_pairs):
+                if p.get('id') == pair_id:
+                    pair = p
+                    pair_index = i
+                    break
+            
+            if not pair:
+                await callback_query.edit_message_text("❌ 频道组不存在")
+                return
+            
+            edit_text = f"""
+🔄 **更改目标频道**
+
+📝 **频道组 {pair_index + 1}**
+📤 **当前目标：** {pair.get('target_name', '未知频道')}
+
+💡 **操作说明：**
+• 请发送新的目标频道链接或用户名
+• 支持格式：@channel_username 或 https://t.me/channel_username
+• 确保您有该频道的管理权限
+
+📤 **请发送新的目标频道：**
+            """.strip()
+            
+            # 设置用户状态为等待输入目标频道
+            self.user_states[user_id] = {
+                'state': f'edit_target_by_id:{pair_id}',
+                'pair_id': pair_id,
+                'pair_index': pair_index
+            }
+            
+            buttons = [
+                [("🔙 取消操作", f"edit_channel_pair:{pair_id}")]
+            ]
+            
+            await callback_query.edit_message_text(
+                edit_text,
+                reply_markup=generate_button_layout(buttons)
+            )
+            
+        except Exception as e:
+            logger.error(f"处理编辑目标频道失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+
+    async def _handle_toggle_enabled_by_id(self, callback_query: CallbackQuery):
+        """处理通过pair_id切换频道组启用状态"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            pair_id = callback_query.data.split(':')[1]
+            
+            # 获取频道组信息
+            channel_pairs = await get_channel_pairs(user_id)
+            pair = None
+            pair_index = None
+            for i, p in enumerate(channel_pairs):
+                if p.get('id') == pair_id:
+                    pair = p
+                    pair_index = i
+                    break
+            
+            if not pair:
+                await callback_query.edit_message_text("❌ 频道组不存在")
+                return
+            
+            # 切换启用状态
+            new_enabled = not pair.get('enabled', True)
+            success = await data_manager.update_channel_pair(user_id, pair_id, {'enabled': new_enabled})
+            
+            if success:
+                status_text = "✅ 已启用" if new_enabled else "❌ 已禁用"
+                await callback_query.answer(f"频道组状态已更新: {status_text}")
+                
+                # 返回编辑频道组界面
+                callback_query.data = f"edit_channel_pair:{pair_id}"
+                await self._handle_edit_channel_pair(callback_query)
+            else:
+                await callback_query.edit_message_text("❌ 更新失败，请稍后重试")
+            
+        except Exception as e:
+            logger.error(f"处理切换频道组状态失败: {e}")
             await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
 
     async def _handle_update_all_channel_info(self, callback_query: CallbackQuery):
@@ -5649,7 +5929,23 @@ class TelegramBot:
         """处理编辑频道组过滤设置"""
         try:
             user_id = str(callback_query.from_user.id)
-            pair_index = int(callback_query.data.split(':')[1])
+            data_part = callback_query.data.split(':')[1]
+            
+            # 检查是否为pair_id格式
+            if data_part.startswith('pair_'):
+                # 通过pair_id查找频道组
+                channel_pairs = await get_channel_pairs(user_id)
+                pair_index = None
+                for i, pair in enumerate(channel_pairs):
+                    if pair.get('id') == data_part:
+                        pair_index = i
+                        break
+                if pair_index is None:
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+            else:
+                # 传统的索引格式
+                pair_index = int(data_part)
             
             # 获取频道组信息
             channel_pairs = await get_channel_pairs(user_id)
