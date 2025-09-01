@@ -107,8 +107,8 @@ class WebServer:
         async with ClientSession() as session:
             while True:
                 try:
-                    # 每25分钟ping一次自己，防止Render休眠
-                    await asyncio.sleep(25 * 60)  # 25分钟
+                    # 每5分钟ping一次自己，防止Render休眠
+                    await asyncio.sleep(5 * 60)  # 5分钟
                     
                     async with session.get(f"{render_url}/ping", timeout=30) as response:
                         if response.status == 200:
