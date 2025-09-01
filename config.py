@@ -1,0 +1,173 @@
+# ==================== 机器人配置文件 ====================
+"""
+机器人配置文件
+包含所有敏感配置信息
+"""
+
+import os
+from typing import Dict, Any
+
+# ==================== 机器人配置 ====================
+
+# 机器人基本信息
+BOT_ID = "your_bot_id"
+BOT_NAME = "your_bot_name"
+BOT_VERSION = "3.0.0"
+BOT_DESCRIPTION = "Telegram搬运机器人"
+API_ID = "your_api_id"
+API_HASH = "your_api_hash"
+BOT_TOKEN = "your_bot_token"
+
+# ==================== Render配置 ====================
+
+# 端口配置
+PORT = 8080
+RENDER_EXTERNAL_URL = "your_render_url"  # 请替换为实际的Render URL
+
+# ==================== Firebase配置 ====================
+
+# Firebase服务账号凭据（请在环境变量中配置实际值）
+FIREBASE_CREDENTIALS = {
+    "type": "service_account",
+    "project_id": "your_project_id",
+    "private_key_id": "your_private_key_id",
+    "private_key": "your_private_key",
+    "client_email": "your_client_email",
+    "client_id": "your_client_id",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "your_client_x509_cert_url",
+    "universe_domain": "googleapis.com"
+}
+
+# Firebase项目ID
+FIREBASE_PROJECT_ID = "your_project_id"
+
+# ==================== 默认用户配置 ====================
+DEFAULT_USER_CONFIG = {
+    # 内容过滤设置
+    "keywords_enabled": False,  # 关键字过滤开关
+    "replacements_enabled": False,  # 敏感词替换开关
+    "filter_keywords": [],
+    "replacement_words": {},
+    "content_removal": False,
+    "remove_links": False,
+    "remove_links_mode": "links_only",  # links_only, remove_message
+    "remove_magnet_links": False,
+    "remove_all_links": False,
+    "remove_hashtags": False,
+    "remove_usernames": False,
+    
+    # 文件过滤设置
+    "filter_photo": False,
+    "filter_video": False,
+    "file_extensions": [],
+    
+    # 按钮过滤设置
+    "filter_buttons": False,
+    "button_filter_mode": "remove_all",  # remove_all, keep_safe, custom
+    
+    # 内容增强功能
+    "tail_text": "",
+    "tail_position": "end",  # start, end
+    "tail_frequency": "always",  # always, interval, random
+    "tail_interval": 5,
+    "tail_probability": 0.3,
+    
+    "additional_buttons": [],
+    "button_frequency": "always",  # always, interval, random
+    "button_interval": 5,
+    "button_probability": 0.3,
+    
+    # 评论搬运设置已移除
+    
+    # 监听设置
+    "monitor_enabled": False,
+    "monitored_pairs": [],
+    
+    # 频道组设置
+    "channel_pairs": [],
+    "channel_filters": {},  # 频道组独立过滤配置
+    "max_channel_pairs": 100,
+    
+    # 任务设置
+    "max_concurrent_tasks": 10,  # 支持最多10个并发任务
+    "max_user_concurrent_tasks": 20,  # 用户最大并发任务数（支持20个频道组同时搬运）
+    "task_timeout": 3600,  # 1小时
+    
+    # 性能设置
+    "message_delay": 0.05,  # 消息间隔（秒）- 优化响应速度
+    "media_group_delay": 0.1,  # 媒体组处理延迟（秒）- 优化响应速度
+    "batch_size": 500,  # 批量处理大小 - 增加批量大小提高效率
+    "retry_attempts": 2,  # 重试次数 - 减少以提高效率
+    "retry_delay": 1.0,  # 重试延迟（秒）- 减少延迟提高响应速度
+}
+
+# ==================== 环境变量配置 ====================
+
+def get_config() -> Dict[str, Any]:
+    """获取配置信息，优先使用环境变量"""
+    return {
+        # 机器人配置
+        "bot_id": os.getenv("BOT_ID", BOT_ID),
+        "bot_name": os.getenv("BOT_NAME", BOT_NAME),
+        "api_id": int(os.getenv("API_ID", API_ID)),
+        "api_hash": os.getenv("API_HASH", API_HASH),
+        "bot_token": os.getenv("BOT_TOKEN", BOT_TOKEN),
+        
+        # Render配置
+        "port": int(os.getenv("PORT", PORT)),
+        "render_external_url": os.getenv("RENDER_EXTERNAL_URL", RENDER_EXTERNAL_URL),
+        
+        # Firebase配置
+        "firebase_credentials": FIREBASE_CREDENTIALS,
+        "firebase_project_id": os.getenv("FIREBASE_PROJECT_ID", FIREBASE_PROJECT_ID),
+    }
+
+# ==================== 配置验证 ====================
+
+def validate_config() -> bool:
+    """验证配置是否完整"""
+    config = get_config()
+    
+    required_fields = [
+        "bot_id", "bot_name", "api_id", "api_hash", 
+        "bot_token", "firebase_project_id"
+    ]
+    
+    for field in required_fields:
+        if not config.get(field):
+            print(f"❌ 缺少必需的配置字段: {field}")
+            return False
+    
+    if not config.get("firebase_credentials"):
+        print("❌ 缺少Firebase凭据配置")
+        return False
+    
+    print("✅ 配置验证通过")
+    return True
+
+# ==================== 配置信息显示 ====================
+
+def show_config_info():
+    """显示配置信息（隐藏敏感数据）"""
+    config = get_config()
+    
+    print("🔧 机器人配置信息:")
+    print(f"   机器人ID: {config['bot_id']}")
+    print(f"   机器人名称: {config['bot_name']}")
+    print(f"   API ID: {config['api_id']}")
+    print(f"   API Hash: {config['api_hash'][:8]}...")
+    print(f"   Bot Token: {config['bot_token'][:8]}...")
+    print(f"   Firebase项目: {config['firebase_project_id']}")
+    print(f"   端口: {config['port']}")
+
+# ==================== 导出配置 ====================
+__all__ = [
+    "BOT_ID", "BOT_NAME", "API_ID", "API_HASH", "BOT_TOKEN",
+    "PORT", "RENDER_EXTERNAL_URL",
+    "FIREBASE_CREDENTIALS", "FIREBASE_PROJECT_ID",
+    "DEFAULT_USER_CONFIG",
+    "validate_config", "get_config", "show_config_info"
+]
