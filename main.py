@@ -12,6 +12,10 @@ import sys
 import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
