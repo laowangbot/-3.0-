@@ -27,7 +27,6 @@ from ui_layouts import (
 )
 from message_engine import create_message_engine
 from cloning_engine import create_cloning_engine, CloneTask
-from monitor_system import create_monitor_system
 from web_server import create_web_server
 
 # 配置日志 - 显示机器人状态信息
@@ -45,7 +44,7 @@ class TelegramBot:
         self.config = get_config()
         self.client = None
         self.cloning_engine = None
-        self.monitor_system = None
+        # self.monitor_system = None  # 已移除监控系统
         self.web_server = None
         self.web_runner = None
         
@@ -89,15 +88,8 @@ class TelegramBot:
             self.cloning_engine.set_progress_callback(self._task_progress_callback)
             logger.info("✅ 进度回调函数设置完成")
             
-            # 初始化监听系统
-            self.monitor_system = create_monitor_system(self.client, self.cloning_engine)
-            
-            # 设置监听系统回调函数
-            self.monitor_system.set_callbacks(
-                message_callback=self._monitor_message_callback,
-                error_callback=self._monitor_error_callback
-            )
-            logger.info("✅ 监听系统初始化成功")
+            # 监听系统已移除
+            logger.info("✅ 核心系统初始化成功")
             
             # 设置事件处理器
             self._setup_handlers()
@@ -2805,13 +2797,7 @@ class TelegramBot:
             # 删除频道组（data_manager.delete_channel_pair已经包含了配置清理逻辑）
             success = await data_manager.delete_channel_pair(user_id, pair['id'])
             
-            # 同时清理监听系统中的相关配置
-            if success and self.monitor_system:
-                try:
-                    await self.monitor_system.remove_monitor_pair(user_id, pair['id'])
-                    logger.info(f"已清理监听系统中的频道组配置: {pair['id']}")
-                except Exception as e:
-                    logger.warning(f"清理监听系统配置时出错: {e}")
+            # 监听系统已移除，无需清理相关配置
             
             if success:
                 # 显示删除成功消息
@@ -5048,13 +5034,7 @@ class TelegramBot:
                 except Exception as e:
                     logger.warning(f"停止Web服务器时出错: {e}")
             
-            # 停止监听系统
-            if self.monitor_system:
-                try:
-                    await self.monitor_system.cleanup()
-                    logger.info("✅ 监听系统已停止")
-                except Exception as e:
-                    logger.warning(f"停止监听系统时出错: {e}")
+            # 监听系统已移除
             
             # 停止Telegram客户端
             if self.client:
@@ -8811,30 +8791,9 @@ class TelegramBot:
             user_config['monitor_enabled'] = new_status
             await save_user_config(user_id, user_config)
             
-            # 启动或停止监听系统
-            if self.monitor_system:
-                if new_status:
-                    # 启动监听
-                    monitored_pairs = user_config.get('monitored_pairs', [])
-                    if monitored_pairs:
-                        await self.monitor_system.start_monitoring(user_id)
-                        status_text = "✅ 实时监听已启用"
-                        await callback_query.answer(status_text)
-                    else:
-                        status_text = "⚠️ 请先选择要监听的频道"
-                        await callback_query.answer(status_text)
-                        # 重置状态
-                        user_config['monitor_enabled'] = False
-                        await save_user_config(user_id, user_config)
-                        new_status = False
-                else:
-                    # 停止监听
-                    await self.monitor_system.stop_monitoring()
-                    status_text = "❌ 实时监听已停用"
-                    await callback_query.answer(status_text)
-            else:
-                await callback_query.answer("❌ 监听系统未初始化")
-                return
+            # 监听系统已移除，显示状态更新
+            status_text = "✅ 设置已更新" if new_status else "❌ 监听已停用"
+            await callback_query.answer(status_text)
             
             # 更新监听菜单显示
             monitored_pairs = user_config.get('monitored_pairs', [])
@@ -9095,9 +9054,7 @@ class TelegramBot:
             user_config['monitored_pairs'] = monitored_pairs
             await save_user_config(user_id, user_config)
             
-            # 如果监听功能已启用，更新监听系统
-            if user_config.get('monitor_enabled', False) and self.monitor_system:
-                await self.monitor_system.start_monitoring(user_id)
+            # 监听系统已移除
             
             await callback_query.answer(f"✅ 已选择全部 {len(channel_pairs)} 个频道")
             
@@ -9118,9 +9075,7 @@ class TelegramBot:
             user_config['monitored_pairs'] = []
             await save_user_config(user_id, user_config)
             
-            # 停止监听系统
-            if self.monitor_system:
-                await self.monitor_system.stop_monitoring()
+            # 监听系统已移除
             
             await callback_query.answer("✅ 已取消选择所有频道")
             
