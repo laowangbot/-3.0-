@@ -331,6 +331,9 @@ class TelegramBot:
                 await self._handle_show_main_menu(callback_query)
             elif data == "select_channel_pairs_to_clone":
                 await self._handle_select_channels(callback_query)
+            elif data.startswith("select_channels_page:"):
+                page = int(data.split(":")[1])
+                await self._handle_select_channels(callback_query, page)
             elif data == "show_channel_config_menu":
                 await self._handle_show_channel_config(callback_query)
             elif data == "show_feature_config_menu":
@@ -512,7 +515,7 @@ class TelegramBot:
                 await self._handle_confirm_delete_channel_pair(callback_query)
             elif data.startswith("confirm_delete_by_id:"):
                 await self._handle_confirm_delete_channel_pair_by_id(callback_query)
-            elif data == "clear_all_channels":
+            elif data == "clear_all_channels" or data == "confirm_clear_all_channels":
                 await self._handle_clear_all_channels(callback_query)
             else:
                 await self._handle_unknown_callback(callback_query)
@@ -536,6 +539,11 @@ class TelegramBot:
         """处理显示主菜单"""
         try:
             user_id = str(callback_query.from_user.id)
+            
+            # 清理用户的输入状态，避免状态冲突
+            if user_id in self.user_states:
+                logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
+                del self.user_states[user_id]
             
             # 获取用户统计信息
             channel_pairs = await get_channel_pairs(user_id)
@@ -563,10 +571,16 @@ class TelegramBot:
             logger.error(f"显示主菜单失败: {e}")
             await callback_query.edit_message_text("❌ 显示菜单失败，请稍后重试")
     
-    async def _handle_select_channels(self, callback_query: CallbackQuery):
-        """处理选择频道（支持多选）"""
+    async def _handle_select_channels(self, callback_query: CallbackQuery, page: int = 0):
+        """处理选择频道（支持多选和分页）"""
         try:
             user_id = str(callback_query.from_user.id)
+            
+            # 清理用户的输入状态，避免状态冲突
+            if user_id in self.user_states:
+                logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
+                del self.user_states[user_id]
+            
             channel_pairs = await get_channel_pairs(user_id)
             
             if not channel_pairs:
@@ -585,13 +599,28 @@ class TelegramBot:
             if user_id not in self.multi_select_states:
                 self.multi_select_states[user_id] = {
                     'selected_channels': [],
-                    'current_step': 'selecting_channels'
+                    'current_step': 'selecting_channels',
+                    'current_page': 0
                 }
+            
+            # 更新当前页码
+            self.multi_select_states[user_id]['current_page'] = page
+            
+            # 分页设置
+            page_size = 40
+            total_pairs = len(channel_pairs)
+            total_pages = (total_pairs + page_size - 1) // page_size
+            start_index = page * page_size
+            end_index = min(start_index + page_size, total_pairs)
             
             # 构建频道选择界面
             selected_count = len(self.multi_select_states[user_id]['selected_channels'])
+            
+            # 分页信息
+            page_info = f"第 {page + 1}/{total_pages} 页" if total_pages > 1 else ""
+            
             select_text = f"""
-📋 **选择要搬运的频道组**
+📋 **选择要搬运的频道组** {page_info}
 
 💡 **功能说明**:
 • 可以同时选择多个频道组进行搬运
@@ -600,7 +629,8 @@ class TelegramBot:
 • 系统会自动管理并发任务
 
 📊 **当前状态**:
-• 可用频道组: {len(channel_pairs)} 个
+• 可用频道组: {total_pairs} 个
+• 当前页显示: {start_index + 1}-{end_index} 个
 • 已选择: {selected_count} 个
 
 🎯 **选择说明**:
@@ -609,14 +639,17 @@ class TelegramBot:
 • 可以同时选择多个频道组
             """.strip()
             
-            # 生成频道组选择按钮（显示选择状态）
+            # 生成当前页的频道组选择按钮（一排一个按钮）
             buttons = []
-            for i, pair in enumerate(channel_pairs):
+            current_page_pairs = channel_pairs[start_index:end_index]
+            
+            # 每个频道组一排一个按钮
+            for i, pair in enumerate(current_page_pairs):
+                pair_index = start_index + i
+                
                 if pair.get('enabled', True):
-                    source_id = pair.get('source_id', f'频道{i+1}')
-                    target_id = pair.get('target_id', f'目标{i+1}')
-                    source_name = pair.get('source_name', f'频道{i+1}')
-                    target_name = pair.get('target_name', f'目标{i+1}')
+                    source_name = pair.get('source_name', f'频道{pair_index+1}')
+                    target_name = pair.get('target_name', f'目标{pair_index+1}')
                     
                     # 优先使用保存的用户名信息
                     source_username = pair.get('source_username', '')
@@ -624,27 +657,40 @@ class TelegramBot:
                     
                     # 如果没有保存的用户名，则尝试获取
                     if not source_username:
-                        source_display = await self._get_channel_display_name_safe(source_id)
+                        source_display = await self._get_channel_display_name_safe(pair.get('source_id', ''))
                     else:
                         source_display = source_username
                     
                     if not target_username:
-                        target_display = await self._get_channel_display_name_safe(target_id)
+                        target_display = await self._get_channel_display_name_safe(pair.get('target_id', ''))
                     else:
                         target_display = target_username
                     
-                    # 组合显示：频道名字（频道用户名）
-                    source_info = f"{source_name}（{source_display}）"
-                    target_info = f"{target_name}（{target_display}）"
+                    # 显示：频道名字
+                    source_info = f"{source_name}"
+                    target_info = f"{target_name}"
                     
                     # 检查是否已选择
-                    is_selected = f"{i}" in self.multi_select_states[user_id]['selected_channels']
+                    is_selected = f"{pair_index}" in self.multi_select_states[user_id]['selected_channels']
                     status_icon = "✅" if is_selected else "⚪"
                     
-                    buttons.append([(
-                        f"{status_icon} {source_info} → {target_info}",
-                        f"multi_select_pair:{i}"
-                    )])
+                    # 按钮文本
+                    button_text = f"{status_icon} {source_info} → {target_info}"
+                    
+                    buttons.append([(button_text, f"multi_select_pair:{pair_index}")])
+            
+            # 添加分页按钮
+            if total_pages > 1:
+                pagination_row = []
+                if page > 0:
+                    pagination_row.append(("⬅️ 上一页", f"select_channels_page:{page - 1}"))
+                
+                pagination_row.append((f"{page + 1}/{total_pages}", "page_info"))
+                
+                if page < total_pages - 1:
+                    pagination_row.append(("下一页 ➡️", f"select_channels_page:{page + 1}"))
+                
+                buttons.append(pagination_row)
             
             # 添加操作按钮
             if selected_count > 0:
@@ -714,80 +760,11 @@ class TelegramBot:
             await callback_query.answer("❌ 处理失败，请稍后重试")
     
     async def _update_multi_select_ui(self, callback_query: CallbackQuery, user_id: str):
-        """更新多选界面显示"""
+        """更新多选界面显示（支持分页）"""
         try:
-            channel_pairs = await get_channel_pairs(user_id)
-            multi_select_state = self.multi_select_states.get(user_id, {})
-            selected_channels = multi_select_state.get('selected_channels', [])
-            
-            # 构建频道选择界面
-            selected_count = len(selected_channels)
-            select_text = f"""
-📋 **选择要搬运的频道组**
-
-💡 **功能说明**:
-• 可以同时选择多个频道组进行搬运
-• 只选择一个就是单任务搬运
-• 选择多个就是多任务搬运
-• 系统会自动管理并发任务
-
-📊 **当前状态**:
-• 可用频道组: {len(channel_pairs)} 个
-• 已选择: {selected_count} 个
-
-🎯 **选择说明**:
-• 点击频道组名称进行选择/取消选择
-• 绿色勾选表示已选择
-• 可以同时选择多个频道组
-            """.strip()
-            
-            # 生成频道组选择按钮（显示选择状态）
-            buttons = []
-            for i, pair in enumerate(channel_pairs):
-                if pair.get('enabled', True):
-                    source_id = pair.get('source_id', f'频道{i+1}')
-                    target_id = pair.get('target_id', f'目标{i+1}')
-                    source_name = pair.get('source_name', f'频道{i+1}')
-                    target_name = pair.get('target_name', f'目标{i+1}')
-                    
-                    # 优先使用保存的用户名信息
-                    source_username = pair.get('source_username', '')
-                    target_username = pair.get('target_username', '')
-                    
-                    # 如果没有保存的用户名，则尝试获取
-                    if not source_username:
-                        source_display = await self._get_channel_display_name_safe(source_id)
-                    else:
-                        source_display = source_username
-                    
-                    if not target_username:
-                        target_display = await self._get_channel_display_name_safe(target_id)
-                    else:
-                        target_display = target_username
-                    
-                    # 组合显示：频道名字 (用户名)
-                    source_info = f"{source_name} ({source_display})"
-                    target_info = f"{target_name} ({target_display})"
-                    
-                    # 检查是否已选择
-                    is_selected = f"{i}" in selected_channels
-                    status_icon = "✅" if is_selected else "⚪"
-                    
-                    buttons.append([(
-                        f"{status_icon} {source_info} → {target_info}",
-                        f"multi_select_pair:{i}"
-                    )])
-            
-            # 添加操作按钮
-            if selected_count > 0:
-                buttons.append([("🚀 继续设置消息ID段", "multi_set_message_ranges")])
-            
-            buttons.append([("🔙 返回主菜单", "show_main_menu")])
-            
-            await callback_query.edit_message_text(
-                select_text,
-                reply_markup=generate_button_layout(buttons)
-            )
+            # 获取当前页码
+            current_page = self.multi_select_states.get(user_id, {}).get('current_page', 0)
+            await self._handle_select_channels(callback_query, current_page)
             
         except Exception as e:
             logger.error(f"更新多选界面失败: {e}")
@@ -1836,13 +1813,13 @@ class TelegramBot:
                 user_config['channel_filters'][pair_id] = channel_filters
                 await save_user_config(user_id, user_config)
             
-            # 添加调试日志
-            logger.info(f"🔍 _init_channel_filters返回 - 频道组 {pair_id}:")
-            logger.info(f"  • 原始user_config中的配置: {user_config.get('channel_filters', {}).get(pair_id, {})}")
-            logger.info(f"  • is_empty_config: {is_empty_config}")
-            logger.info(f"  • modified_channel_filters: {modified_channel_filters}")
-            logger.info(f"  • 返回的channel_filters: {channel_filters}")
-            logger.info(f"  • independent_enabled: {channel_filters.get('independent_enabled', False)}")
+            # 调试日志已注释以减少后台输出
+            # logger.info(f"🔍 _init_channel_filters返回 - 频道组 {pair_id}:")
+            # logger.info(f"  • 原始user_config中的配置: {user_config.get('channel_filters', {}).get(pair_id, {})}")
+            # logger.info(f"  • is_empty_config: {is_empty_config}")
+            # logger.info(f"  • modified_channel_filters: {modified_channel_filters}")
+            # logger.info(f"  • 返回的channel_filters: {channel_filters}")
+            # logger.info(f"  • independent_enabled: {channel_filters.get('independent_enabled', False)}")
             
             return channel_filters
             
@@ -2249,6 +2226,12 @@ class TelegramBot:
         """处理显示频道配置（支持分页）"""
         try:
             user_id = str(callback_query.from_user.id)
+            
+            # 清理用户的输入状态，避免状态冲突
+            if user_id in self.user_states:
+                logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
+                del self.user_states[user_id]
+            
             channel_pairs = await get_channel_pairs(user_id)
             
             # 分页参数
@@ -2357,6 +2340,12 @@ class TelegramBot:
         """处理显示功能配置"""
         try:
             user_id = str(callback_query.from_user.id)
+            
+            # 清理用户的输入状态，避免状态冲突
+            if user_id in self.user_states:
+                logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
+                del self.user_states[user_id]
+            
             user_config = await get_user_config(user_id)
             
             # 统计配置信息
@@ -2707,7 +2696,7 @@ class TelegramBot:
 • 确保机器人有读取权限
 • 私密频道需要机器人已是成员或管理员
 
-🔙 发送 /menu 返回主菜单
+
             """.strip()
             
             # 设置用户状态为等待输入采集频道
@@ -4305,8 +4294,6 @@ class TelegramBot:
 • 发送 "清空" 来清空所有关键字
 
 ⚠️ **注意：** 包含关键字的消息将被完全移除
-
-🔙 发送 /menu 返回主菜单
             """.strip()
             
             # 设置用户状态为等待关键字输入
@@ -4316,8 +4303,16 @@ class TelegramBot:
             }
             logger.info(f"已设置用户 {user_id} 状态为等待关键字输入")
             
+            # 创建返回按钮
+            buttons = [
+                [("🔙 返回功能设定", "show_feature_config_menu")]
+            ]
+            
             # 编辑消息
-            await callback_query.edit_message_text(config_text)
+            await callback_query.edit_message_text(
+                config_text,
+                reply_markup=generate_button_layout(buttons)
+            )
             logger.info(f"成功显示关键字过滤设置界面给用户 {user_id}")
             
         except Exception as e:
@@ -4624,8 +4619,6 @@ class TelegramBot:
 • 发送 "原词=新词" 来添加替换规则
 • 发送 "删除 原词" 来删除规则
 • 发送 "清空" 来清空所有规则
-
-🔙 发送 /menu 返回主菜单
             """.strip()
             
             # 设置用户状态为等待替换词输入
@@ -4634,7 +4627,15 @@ class TelegramBot:
                 'data': {}
             }
             
-            await callback_query.edit_message_text(config_text)
+            # 创建返回按钮
+            buttons = [
+                [("🔙 返回功能设定", "show_feature_config_menu")]
+            ]
+            
+            await callback_query.edit_message_text(
+                config_text,
+                reply_markup=generate_button_layout(buttons)
+            )
             
         except Exception as e:
             logger.error(f"处理敏感词替换管理失败: {e}")
@@ -6081,7 +6082,7 @@ class TelegramBot:
             buttons = [
                 [("🔄 设置小尾巴文本", f"request_tail_text:{pair_index}")],
                 [("⚙️ 设置添加频率", f"select_tail_frequency:{pair_index}")],
-                [("🔙 返回过滤设置", f"edit_filters:{pair_index}")]
+                [("🔙 返回过滤设置", f"channel_filters:{pair['id']}")]
             ]
             
             await callback_query.edit_message_text(
@@ -6242,12 +6243,12 @@ class TelegramBot:
             # 检查是否启用独立过滤
             independent_filters = channel_filters.get('independent_enabled', False)
             
-            # 添加UI显示调试日志
-            logger.info(f"🔍 UI显示调试 - 频道组 {pair_index}:")
-            logger.info(f"  • channel_filters: {channel_filters}")
-            logger.info(f"  • independent_filters: {independent_filters}")
-            logger.info(f"  • user_config中的channel_filters: {user_config.get('channel_filters', {})}")
-            logger.info(f"  • 将显示状态: {'✅ 已启用' if independent_filters else '❌ 使用全局配置'}")
+            # UI显示调试日志已注释以减少后台输出
+            # logger.info(f"🔍 UI显示调试 - 频道组 {pair_index}:")
+            # logger.info(f"  • channel_filters: {channel_filters}")
+            # logger.info(f"  • independent_filters: {independent_filters}")
+            # logger.info(f"  • user_config中的channel_filters: {user_config.get('channel_filters', {})}")
+            # logger.info(f"  • 将显示状态: {'✅ 已启用' if independent_filters else '❌ 使用全局配置'}")
             
             # 如果启用独立过滤，显示频道组配置；否则显示全局配置
             if independent_filters:
@@ -6303,17 +6304,13 @@ class TelegramBot:
 💡 请选择要配置的过滤选项：
             """.strip()
             
-            # 生成过滤配置按钮
+            # 生成过滤配置按钮 - 一行2个按钮布局
             buttons = [
                 [("🔄 独立过滤开关", f"toggle_channel_independent_filters:{pair['id']}")],
-                [("🔑 关键字过滤", f"channel_keywords:{pair['id']}")],
-                [("🔄 敏感词替换", f"channel_replacements:{pair['id']}")],
-                [("📝 文本内容移除", f"channel_content_removal:{pair['id']}")],
-                [("🔗 链接移除", f"channel_links_removal:{pair['id']}")],
-                [("👤 用户名移除", f"channel_usernames_removal:{pair['id']}")],
-                [("🔘 按钮移除", f"channel_buttons_removal:{pair['id']}")],
-                [("📝 添加小尾巴", f"channel_tail_text:{pair['id']}")],
-                [("🔘 添加按钮", f"channel_buttons:{pair['id']}")],
+                [("🔑 关键字过滤", f"channel_keywords:{pair['id']}"), ("🔄 敏感词替换", f"channel_replacements:{pair['id']}")],
+                [("📝 文本内容移除", f"channel_content_removal:{pair['id']}"), ("🔗 链接移除", f"channel_links_removal:{pair['id']}")],
+                [("👤 用户名移除", f"channel_usernames_removal:{pair['id']}"), ("🔘 按钮移除", f"channel_buttons_removal:{pair['id']}")],
+                [("📝 添加小尾巴", f"channel_tail_text:{pair['id']}"), ("🔘 添加按钮", f"channel_buttons:{pair['id']}")],
                 [("🔙 返回频道详情", f"edit_channel_pair:{pair['id']}")]
             ]
             
@@ -6404,8 +6401,6 @@ class TelegramBot:
 • 发送 "删除 关键字" 来删除规则
 • 发送 "清空" 来清空所有关键字
 • 发送 "开关" 来切换启用状态
-
-🔙 发送 /menu 返回主菜单
             """.strip()
             
             # 设置用户状态为等待关键字输入
@@ -6414,7 +6409,12 @@ class TelegramBot:
                 'data': {'pair_index': pair_index}
             }
             
-            await callback_query.edit_message_text(config_text)
+            buttons = [["🔙 返回过滤配置", f"channel_filters:{pair['id']}"]]
+            
+            await callback_query.edit_message_text(
+                config_text,
+                reply_markup=generate_button_layout(buttons)
+            )
             
         except Exception as e:
             logger.error(f"处理频道组关键字过滤失败: {e}")
@@ -6761,8 +6761,6 @@ class TelegramBot:
 • 发送 "删除 原词" 来删除规则
 • 发送 "清空" 来清空所有规则
 • 发送 "开关" 来切换启用状态
-
-🔙 发送 /menu 返回主菜单
             """.strip()
             
             # 设置用户状态为等待替换词输入
@@ -6771,7 +6769,12 @@ class TelegramBot:
                 'data': {'pair_index': pair_index}
             }
             
-            await callback_query.edit_message_text(config_text)
+            buttons = [["🔙 返回过滤配置", f"channel_filters:{pair['id']}"]]
+            
+            await callback_query.edit_message_text(
+                config_text,
+                reply_markup=generate_button_layout(buttons)
+            )
             
         except Exception as e:
             logger.error(f"处理频道组敏感词替换失败: {e}")
@@ -6836,8 +6839,7 @@ class TelegramBot:
 • 仅移除纯文本：只移除没有媒体内容的纯文本消息
 • 移除所有包含文本的信息：移除所有包含文本的消息（包括图片、视频等）
 
-🔙 发送 /menu 返回主菜单
-            """.strip()
+""".strip()
             
             # 生成配置按钮
             buttons = [
@@ -6952,8 +6954,7 @@ class TelegramBot:
 • 仅移除纯文本：只移除纯文本消息
 • 移除所有包含文本的信息：移除所有包含文本的消息
 
-🔙 发送 /menu 返回主菜单
-            """.strip()
+""".strip()
             
             await callback_query.edit_message_text(success_text)
             
@@ -7016,8 +7017,7 @@ class TelegramBot:
 • 智能移除链接：只移除消息中的链接，保留其他内容
 • 移除整条消息：包含链接的整条消息将被完全移除
 
-🔙 发送 /menu 返回主菜单
-            """.strip()
+""".strip()
             
             # 生成配置按钮
             buttons = [
@@ -7485,11 +7485,12 @@ class TelegramBot:
             new_status = not current_status
             
             # 添加调试日志
-            logger.info(f"🔍 独立过滤开关调试 - 频道组 {pair_index}:")
-            logger.info(f"  • 当前状态: {current_status}")
-            logger.info(f"  • 新状态: {new_status}")
-            logger.info(f"  • 当前channel_filters: {channel_filters}")
-            logger.info(f"  • user_config中的channel_filters: {user_config.get('channel_filters', {})}")
+            # 独立过滤开关调试日志已注释以减少后台输出
+            # logger.info(f"🔍 独立过滤开关调试 - 频道组 {pair_index}:")
+            # logger.info(f"  • 当前状态: {current_status}")
+            # logger.info(f"  • 新状态: {new_status}")
+            # logger.info(f"  • 当前channel_filters: {channel_filters}")
+            # logger.info(f"  • user_config中的channel_filters: {user_config.get('channel_filters', {})}")
             
             # 标记是否需要保存配置
             modified_channel_filters = False
