@@ -3124,8 +3124,14 @@ class TelegramBot:
                     await self._process_multi_select_message_input(message, user_id)
                     return
             
-            # 默认处理：显示主菜单
-            await self._show_main_menu(message)
+            # 默认处理：只有在用户没有状态时才显示主菜单
+            if user_id not in self.user_states:
+                await self._show_main_menu(message)
+            else:
+                # 如果用户有状态但没有匹配到处理分支，清除状态并显示主菜单
+                logger.warning(f"用户 {user_id} 有未处理的状态: {self.user_states[user_id]}")
+                del self.user_states[user_id]
+                await self._show_main_menu(message)
             
         except Exception as e:
             logger.error(f"处理文本消息失败: {e}")
@@ -3341,6 +3347,10 @@ class TelegramBot:
             
         except Exception as e:
             logger.error(f"处理采集频道输入失败: {e}")
+            # 清除用户状态，避免重复处理
+            if user_id in self.user_states:
+                del self.user_states[user_id]
+            
             await message.reply_text(
                 "❌ **处理失败！**\n\n"
                 "🔍 **错误类型：** 系统内部错误\n"
@@ -3408,6 +3418,10 @@ class TelegramBot:
             
             if not channel_id:
                 logger.error(f"频道验证失败，返回None: {channel_info}")
+                # 清除用户状态，避免重复处理
+                if user_id in self.user_states:
+                    del self.user_states[user_id]
+                
                 # 提供更详细的错误信息
                 if channel_info.startswith('@'):
                     await message.reply_text(
@@ -3510,6 +3524,9 @@ class TelegramBot:
                         ])
                     )
                 else:
+                    # 清除用户状态，避免重复处理
+                    if user_id in self.user_states:
+                        del self.user_states[user_id]
                     await message.reply_text("❌ 添加频道组失败，请检查频道ID是否正确，以及机器人是否有相应权限。")
                 
                 return
@@ -3545,6 +3562,10 @@ class TelegramBot:
                 
             except Exception as e:
                 logger.error(f"获取目标频道信息失败: {e}")
+                # 清除用户状态，避免重复处理
+                if user_id in self.user_states:
+                    del self.user_states[user_id]
+                
                 await message.reply_text(
                     f"❌ **目标频道验证失败！**\n\n"
                     f"📤 **频道：** {channel_info}\n"
@@ -3680,6 +3701,10 @@ class TelegramBot:
             
         except Exception as e:
             logger.error(f"处理目标频道输入失败: {e}")
+            # 清除用户状态，避免重复处理
+            if user_id in self.user_states:
+                del self.user_states[user_id]
+            
             await message.reply_text(
                 "❌ **处理失败！**\n\n"
                 "🔍 **错误类型：** 系统内部错误\n"

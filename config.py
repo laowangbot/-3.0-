@@ -108,6 +108,19 @@ DEFAULT_USER_CONFIG = {
 
 def get_config() -> Dict[str, Any]:
     """获取配置信息，优先使用环境变量"""
+    # 处理Firebase凭据
+    firebase_credentials = FIREBASE_CREDENTIALS
+    firebase_credentials_env = os.getenv("FIREBASE_CREDENTIALS")
+    
+    if firebase_credentials_env and firebase_credentials_env != "your_firebase_credentials_json":
+        try:
+            # 尝试解析环境变量中的JSON格式Firebase凭据
+            import json
+            firebase_credentials = json.loads(firebase_credentials_env)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Firebase凭据JSON格式错误: {e}")
+            print("使用默认配置，请检查FIREBASE_CREDENTIALS环境变量格式")
+    
     return {
         # 机器人配置
         "bot_id": os.getenv("BOT_ID", BOT_ID),
@@ -121,7 +134,7 @@ def get_config() -> Dict[str, Any]:
         "render_external_url": os.getenv("RENDER_EXTERNAL_URL", RENDER_EXTERNAL_URL),
         
         # Firebase配置
-        "firebase_credentials": FIREBASE_CREDENTIALS,
+        "firebase_credentials": firebase_credentials,
         "firebase_project_id": os.getenv("FIREBASE_PROJECT_ID", FIREBASE_PROJECT_ID),
     }
 

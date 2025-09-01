@@ -29,11 +29,22 @@ class DataManager:
     def _init_firebase(self):
         """初始化Firebase连接"""
         try:
+            # 获取配置
+            from config import get_config
+            config = get_config()
+            firebase_credentials = config.get('firebase_credentials')
+            
+            # 验证Firebase凭据
+            if not self._validate_firebase_credentials(firebase_credentials):
+                logger.error("❌ Firebase凭据验证失败")
+                self.initialized = False
+                return
+            
             # 初始化Firebase应用
             if not firebase_admin._apps:
-                cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+                cred = credentials.Certificate(firebase_credentials)
                 firebase_admin.initialize_app(cred, {
-                    'projectId': FIREBASE_PROJECT_ID
+                    'projectId': config.get('firebase_project_id')
                 })
             
             # 获取Firestore数据库实例
@@ -43,7 +54,69 @@ class DataManager:
             
         except Exception as e:
             logger.error(f"❌ Firebase连接初始化失败: {e}")
+            self._diagnose_firebase_error(e)
             self.initialized = False
+    
+    def _validate_firebase_credentials(self, credentials_dict: Dict[str, Any]) -> bool:
+        """验证Firebase凭据格式"""
+        if not isinstance(credentials_dict, dict):
+            logger.error("❌ Firebase凭据必须是字典格式")
+            return False
+        
+        required_fields = [
+            'type', 'project_id', 'private_key_id', 'private_key',
+            'client_email', 'client_id', 'auth_uri', 'token_uri'
+        ]
+        
+        for field in required_fields:
+            if field not in credentials_dict:
+                logger.error(f"❌ Firebase凭据缺少必需字段: {field}")
+                return False
+            
+            if not credentials_dict[field] or credentials_dict[field].startswith('your_'):
+                logger.error(f"❌ Firebase凭据字段 {field} 未配置或使用占位符值")
+                return False
+        
+        # 验证private_key格式
+        private_key = credentials_dict.get('private_key', '')
+        if not private_key.startswith('-----BEGIN PRIVATE KEY-----'):
+            logger.error("❌ private_key格式错误：必须以 '-----BEGIN PRIVATE KEY-----' 开头")
+            return False
+        
+        if not private_key.endswith('-----END PRIVATE KEY-----\n'):
+            logger.error("❌ private_key格式错误：必须以 '-----END PRIVATE KEY-----\\n' 结尾")
+            return False
+        
+        logger.info("✅ Firebase凭据格式验证通过")
+        return True
+    
+    def _diagnose_firebase_error(self, error: Exception):
+        """诊断Firebase错误并提供解决建议"""
+        error_str = str(error).lower()
+        
+        if 'malformedframing' in error_str or 'pem file' in error_str:
+            logger.error("🔧 Firebase PEM证书格式错误诊断:")
+            logger.error("   1. 检查 private_key 字段是否包含完整的证书内容")
+            logger.error("   2. 确保换行符已正确转义为 \\n")
+            logger.error("   3. 验证证书以 '-----BEGIN PRIVATE KEY-----' 开头")
+            logger.error("   4. 验证证书以 '-----END PRIVATE KEY-----' 结尾")
+            logger.error("   5. 检查JSON格式是否正确（无多余逗号、引号匹配）")
+        
+        elif 'certificate' in error_str:
+            logger.error("🔧 Firebase证书错误诊断:")
+            logger.error("   1. 重新下载Firebase服务账号密钥文件")
+            logger.error("   2. 确保使用正确的项目凭据")
+            logger.error("   3. 检查服务账号是否有足够权限")
+        
+        elif 'project' in error_str:
+            logger.error("🔧 Firebase项目错误诊断:")
+            logger.error("   1. 检查 FIREBASE_PROJECT_ID 是否正确")
+            logger.error("   2. 确保项目已启用Firestore数据库")
+            logger.error("   3. 验证服务账号属于正确的项目")
+        
+        else:
+            logger.error(f"🔧 其他Firebase错误: {error}")
+            logger.error("   请检查网络连接和Firebase服务状态")
     
     async def get_user_config(self, user_id: str) -> Dict[str, Any]:
         """获取用户配置"""

@@ -331,8 +331,8 @@ class CloningEngine:
             # 检查源频道
             source_chat = None
             try:
-                # 如果是 @c/数字 格式，尝试多种前缀
-                if actual_source_id.startswith('@c/'):
+                # 如果是私密频道格式（@c/数字 或 -100数字），尝试多种前缀
+                if actual_source_id.startswith('@c/') or actual_source_id.startswith('-100'):
                     source_chat = await self._try_private_channel_access(actual_source_id)
                     if source_chat:
                         # 记录验证成功的实际频道ID
@@ -373,8 +373,8 @@ class CloningEngine:
             # 检查目标频道
             target_chat = None
             try:
-                # 如果是 @c/数字 格式，尝试多种前缀
-                if actual_target_id.startswith('@c/'):
+                # 如果是私密频道格式（@c/数字 或 -100数字），尝试多种前缀
+                if actual_target_id.startswith('@c/') or actual_target_id.startswith('-100'):
                     target_chat = await self._try_private_channel_access(actual_target_id)
                     if target_chat:
                         # 记录验证成功的实际频道ID
@@ -469,12 +469,22 @@ class CloningEngine:
     
     async def _try_private_channel_access(self, channel_id: str):
         """尝试多种前缀格式访问私密频道"""
-        if not channel_id.startswith('@c/'):
+        # 处理不同格式的私密频道ID
+        channel_num = None
+        
+        if channel_id.startswith('@c/'):
+            # @c/1234567890 格式
+            channel_num = channel_id.replace('@c/', '')
+        elif channel_id.startswith('-100'):
+            # -1001234567890 格式，提取数字部分
+            channel_num = channel_id[4:]  # 移除-100前缀
+        elif channel_id.startswith('-'):
+            # 其他负数格式
+            return None
+        else:
             return None
         
-        # 提取数字部分
-        channel_num = channel_id.replace('@c/', '')
-        if not channel_num.isdigit():
+        if not channel_num or not channel_num.isdigit():
             logger.warning(f"私密频道ID格式错误: {channel_id}")
             return None
         
