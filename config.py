@@ -108,9 +108,13 @@ DEFAULT_USER_CONFIG = {
 
 def get_config() -> Dict[str, Any]:
     """获取配置信息，优先使用环境变量"""
-    # 确保加载.env文件
-    from dotenv import load_dotenv
-    load_dotenv()
+    # 检查是否在Render环境（有RENDER环境变量）
+    is_render = os.getenv("RENDER") is not None
+    
+    # 只在非Render环境加载.env文件
+    if not is_render:
+        from dotenv import load_dotenv
+        load_dotenv()
     
     # 处理Firebase凭据
     firebase_credentials = FIREBASE_CREDENTIALS
@@ -128,13 +132,29 @@ def get_config() -> Dict[str, Any]:
     # 检查是否使用本地开发模式
     use_local_storage = os.getenv("USE_LOCAL_STORAGE", "false").lower() == "true"
     
+    # 获取配置值，优先使用环境变量
+    bot_id = os.getenv("BOT_ID", BOT_ID)
+    bot_name = os.getenv("BOT_NAME", BOT_NAME)
+    api_id_str = os.getenv("API_ID", API_ID)
+    api_hash = os.getenv("API_HASH", API_HASH)
+    bot_token = os.getenv("BOT_TOKEN", BOT_TOKEN)
+    
+    # 处理API_ID
+    if api_id_str and api_id_str != "your_api_id":
+        try:
+            api_id = int(api_id_str)
+        except ValueError:
+            api_id = 12345
+    else:
+        api_id = 12345
+    
     return {
         # 机器人配置
-        "bot_id": os.getenv("BOT_ID", BOT_ID),
-        "bot_name": os.getenv("BOT_NAME", BOT_NAME),
-        "api_id": int(os.getenv("API_ID", API_ID)) if os.getenv("API_ID", API_ID) != "your_api_id" else 12345,
-        "api_hash": os.getenv("API_HASH", API_HASH),
-        "bot_token": os.getenv("BOT_TOKEN", BOT_TOKEN),
+        "bot_id": bot_id,
+        "bot_name": bot_name,
+        "api_id": api_id,
+        "api_hash": api_hash,
+        "bot_token": bot_token,
         
         # Render配置
         "port": int(os.getenv("PORT", PORT)),
@@ -146,6 +166,9 @@ def get_config() -> Dict[str, Any]:
         
         # 存储配置
         "use_local_storage": use_local_storage,
+        
+        # 环境信息
+        "is_render": is_render,
     }
 
 # ==================== 配置验证 ====================

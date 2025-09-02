@@ -82,6 +82,7 @@ class TelegramBot:
             
             # 显示配置信息用于调试
             logger.info(f"🔧 机器人配置:")
+            logger.info(f"   运行环境: {'Render' if self.config.get('is_render') else '本地'}")
             logger.info(f"   Bot ID: {self.config.get('bot_id')}")
             logger.info(f"   Bot Name: {self.config.get('bot_name')}")
             logger.info(f"   API ID: {self.config.get('api_id')}")
