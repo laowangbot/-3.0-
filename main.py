@@ -4917,21 +4917,44 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             data = callback_query.data
             
-            # 检查是否包含频道组索引
+            # 检查是否包含频道组信息
             if ':' in data:
-                pair_index = int(data.split(':')[1])
-                # 获取频道组信息
-                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-                if pair_index >= len(channel_pairs):
-                    await callback_query.edit_message_text("❌ 频道组不存在")
-                    return
+                data_part = data.split(':')[1]
                 
-                pair = channel_pairs[pair_index]
+                # 判断是pair_id格式还是pair_index格式
+                if data_part.startswith('pair_'):
+                    # pair_id格式
+                    pair_id = data_part
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                    
+                    # 查找对应的频道组
+                    pair = None
+                    pair_index = None
+                    for i, p in enumerate(channel_pairs):
+                        if p.get('id') == pair_id:
+                            pair = p
+                            pair_index = i
+                            break
+                    
+                    if not pair:
+                        await callback_query.edit_message_text("❌ 频道组不存在")
+                        return
+                else:
+                    # pair_index格式（向后兼容）
+                    pair_index = int(data_part)
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                    if pair_index >= len(channel_pairs):
+                        await callback_query.edit_message_text("❌ 频道组不存在")
+                        return
+                    
+                    pair = channel_pairs[pair_index]
+                    pair_id = pair.get('id', f'pair_{pair_index}')
+                
                 source_name = pair.get('source_name', f'频道{pair_index+1}')
                 target_name = pair.get('target_name', f'目标{pair_index+1}')
                 
                 config_title = f"🔘 **频道组 {pair_index + 1} 按钮设置**\n\n📡 **采集频道：** {source_name}\n📤 **发布频道：** {target_name}\n\n"
-                return_callback = f"channel_buttons:{pair_index}"
+                return_callback = f"channel_buttons:{pair_id}"
             else:
                 config_title = "📋 **全局附加按钮设置**\n\n"
                 return_callback = "show_feature_config_menu"
@@ -4964,7 +4987,7 @@ class TelegramBot:
             # 设置用户状态为等待附加按钮输入
             self.user_states[user_id] = {
                 'state': 'waiting_for_buttons',
-                'data': {'pair_index': pair_index if ':' in data else None}
+                'data': {'pair_id': pair_id if ':' in data else None, 'pair_index': pair_index if ':' in data else None}
             }
             
             # 生成按钮
@@ -6686,10 +6709,10 @@ class TelegramBot:
             
             # 生成按钮设置按钮
             buttons = [
-                [("➕ 添加按钮", f"request_buttons:{pair_index}")],
+                [("➕ 添加按钮", f"request_buttons:{pair['id']}")],
                 [("🗑️ 清空按钮", "clear_additional_buttons")],
-                [("⚙️ 设置添加频率", f"select_button_frequency:{pair_index}")],
-                [("🔙 返回过滤设置", f"edit_filters:{pair_index}")]
+                [("⚙️ 设置添加频率", f"select_button_frequency:{pair['id']}")],
+                [("🔙 返回过滤设置", f"channel_filters:{pair['id']}")]
             ]
             
             await callback_query.edit_message_text(
