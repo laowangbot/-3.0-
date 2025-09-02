@@ -75,6 +75,17 @@ class TelegramBot:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
+    async def _cleanup_session_files(self, session_name):
+        """清理可能损坏的session文件"""
+        try:
+            import os
+            session_file = f"{session_name}.session"
+            if os.path.exists(session_file):
+                logger.info(f"🗑️ 清理旧的session文件: {session_file}")
+                os.remove(session_file)
+        except Exception as e:
+            logger.warning(f"清理session文件失败: {e}")
+    
     async def initialize(self):
         """初始化机器人"""
         try:
@@ -97,8 +108,14 @@ class TelegramBot:
                 return False
             
             # 初始化Telegram客户端
+            # 在Render环境中使用不同的session文件名
+            session_name = "render_bot_session" if self.config.get('is_render') else "bot_session"
+            
+            # 清理可能损坏的session文件
+            await self._cleanup_session_files(session_name)
+            
             self.client = Client(
-                "bot_session",
+                session_name,
                 api_id=self.config['api_id'],
                 api_hash=self.config['api_hash'],
                 bot_token=self.config['bot_token']
