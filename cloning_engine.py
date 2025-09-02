@@ -138,6 +138,13 @@ class CloningEngine:
             channel_filters = user_config.get('channel_filters', {}).get(pair_id, {})
             independent_enabled = channel_filters.get('independent_enabled', False)
             
+            # 添加详细的调试信息
+            logger.info(f"频道组 {pair_id} 配置检查:")
+            logger.info(f"  • 用户配置中的channel_filters: {list(user_config.get('channel_filters', {}).keys())}")
+            logger.info(f"  • 当前频道组配置: {channel_filters}")
+            logger.info(f"  • independent_enabled: {independent_enabled}")
+            logger.info(f"  • 全局tail_text: '{user_config.get('tail_text', '')}'")
+            
             if independent_enabled:
                 # 使用频道组独立配置
                 logger.info(f"频道组 {pair_id} 使用独立过滤配置")
