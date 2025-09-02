@@ -188,8 +188,15 @@ class CloningEngine:
                 logger.info(f"  • remove_links: {effective_config['remove_links']}")
                 logger.info(f"  • remove_usernames: {effective_config['remove_usernames']}")
                 logger.info(f"  • filter_buttons: {effective_config['filter_buttons']}")
-                logger.info(f"  • tail_text: {effective_config['tail_text']}")
+                logger.info(f"  • tail_text: '{effective_config['tail_text']}'")
+                logger.info(f"  • tail_frequency: {effective_config['tail_frequency']}")
+                logger.info(f"  • tail_position: {effective_config['tail_position']}")
                 logger.info(f"  • additional_buttons: {effective_config['additional_buttons']}")
+                
+                # 添加原始频道组配置调试
+                logger.info(f"频道组 {pair_id} 原始配置:")
+                logger.info(f"  • channel_filters: {channel_filters}")
+                logger.info(f"  • 是否使用频道组配置: {pair_id in user_config.get('channel_filters', {})}")
             else:
                 # 使用全局配置
                 logger.info(f"频道组 {pair_id} 使用全局过滤配置")
