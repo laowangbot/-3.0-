@@ -1882,7 +1882,7 @@ class TelegramBot:
             if is_empty_config:
                 # 完全空的配置，复制全局配置
                 global_config = {
-                    'keywords_enabled': user_config.get('keywords_enabled', False),
+                    'keywords_enabled': user_config.get('keywords_enabled', True),  # 默认开启关键字过滤
                     'keywords': user_config.get('filter_keywords', []).copy(),
                     'replacements_enabled': user_config.get('replacements_enabled', False),
                     'replacements': user_config.get('replacement_words', {}).copy(),
@@ -4250,8 +4250,8 @@ class TelegramBot:
                 del self.user_states[user_id]
                 return
             
-            # 检查是否是频率设置（数字1-100）
-            if text.isdigit():
+            # 检查是否是频率设置（数字1-100，且长度不超过3位）
+            if text.isdigit() and len(text) <= 3:
                 frequency = int(text)
                 if 1 <= frequency <= 100:
                     # 检查是否是频道组特定设置
