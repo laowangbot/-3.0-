@@ -80,6 +80,16 @@ class TelegramBot:
         try:
             logger.info("🚀 开始初始化机器人...")
             
+            # 显示配置信息用于调试
+            logger.info(f"🔧 机器人配置:")
+            logger.info(f"   Bot ID: {self.config.get('bot_id')}")
+            logger.info(f"   Bot Name: {self.config.get('bot_name')}")
+            logger.info(f"   API ID: {self.config.get('api_id')}")
+            logger.info(f"   API Hash: {self.config.get('api_hash', '')[:8]}...")
+            logger.info(f"   Bot Token: {self.config.get('bot_token', '')[:8]}...")
+            logger.info(f"   Firebase Project: {self.config.get('firebase_project_id')}")
+            logger.info(f"   使用本地存储: {self.config.get('use_local_storage', False)}")
+            
             # 验证配置
             if not validate_config():
                 logger.error("❌ 配置验证失败")
