@@ -23,7 +23,7 @@ from pyrogram.errors import FloodWait, RPCError
 
 # 导入自定义模块
 from config import get_config, validate_config
-from data_manager import data_manager, get_user_config, save_user_config, get_channel_pairs
+from multi_bot_data_manager import create_multi_bot_data_manager
 from ui_layouts import (
     generate_button_layout, MAIN_MENU_BUTTONS, CHANNEL_MANAGEMENT_BUTTONS,
     FEATURE_CONFIG_BUTTONS, MONITOR_SETTINGS_BUTTONS, TASK_MANAGEMENT_BUTTONS,
@@ -46,6 +46,8 @@ class TelegramBot:
     def __init__(self):
         """初始化机器人"""
         self.config = get_config()
+        self.bot_id = self.config.get('bot_id', 'default_bot')
+        self.data_manager = create_multi_bot_data_manager(self.bot_id)
         self.client = None
         self.cloning_engine = None
         # self.monitor_system = None  # 已移除监控系统
@@ -54,6 +56,9 @@ class TelegramBot:
         
         # 用户会话状态
         self.user_states: Dict[str, Dict[str, Any]] = {}
+        
+        # 多任务选择状态
+        self.multi_select_states: Dict[str, Dict[str, Any]] = {}
         
         # 初始化状态
         self.initialized = False
@@ -135,6 +140,10 @@ class TelegramBot:
         async def convert_command(client, message: Message):
             await self._handle_convert_command(message)
         
+        @self.client.on_message(filters.command("test_join"))
+        async def test_join_command(client, message: Message):
+            await self._handle_test_join_command(message)
+        
         # 回调查询处理器
         @self.client.on_callback_query()
         async def callback_handler(client, callback_query: CallbackQuery):
@@ -147,6 +156,16 @@ class TelegramBot:
             if message.text.startswith('/'):
                 return
             await self._handle_text_message(message)
+        
+        # 通用消息监听器 - 处理所有消息
+        @self.client.on_message()
+        async def universal_message_handler(client, message: Message):
+            await self._handle_all_messages(message)
+        
+        # 原始消息监听器 - 用于调试
+        @self.client.on_raw_update()
+        async def raw_update_handler(client, update, users, chats):
+            await self._handle_raw_update(update)
     
     async def _handle_start_command(self, message: Message):
         """处理开始命令"""
@@ -155,7 +174,7 @@ class TelegramBot:
             user_name = message.from_user.first_name or "用户"
             
             # 创建或获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 欢迎消息
             welcome_text = f"""
@@ -287,14 +306,51 @@ class TelegramBot:
             logger.error(f"处理转换命令失败: {e}")
             await message.reply_text("❌ 转换失败，请稍后重试")
     
+    async def _handle_test_join_command(self, message: Message):
+        """处理测试加入命令"""
+        try:
+            # 安全获取用户ID
+            user_id = "unknown"
+            if message.from_user:
+                user_id = str(message.from_user.id)
+            elif message.sender_chat:
+                user_id = f"chat_{message.sender_chat.id}"
+            
+            chat_id = message.chat.id
+            chat_type = message.chat.type
+            
+            logger.info(f"🧪 收到测试加入命令: user_id={user_id}, chat_id={chat_id}, chat_type={chat_type}")
+            
+            # 检查是否在群组中 - 使用字符串比较
+            chat_type_str = str(chat_type).lower()
+            logger.info(f"🔍 聊天类型字符串: '{chat_type_str}'")
+            
+            # 检查是否包含关键词
+            if any(keyword in chat_type_str for keyword in ['group', 'supergroup', 'channel']):
+                logger.info(f"✅ 检测到群组/频道类型: {chat_type_str}")
+                # 模拟群组加入事件
+                await self._send_group_verification_message(message)
+                await message.reply_text("✅ 测试验证消息已发送")
+            else:
+                logger.warning(f"❌ 不支持的聊天类型: {chat_type_str}")
+                await message.reply_text(f"❌ 此命令只能在群组或频道中使用，当前类型: {chat_type_str}")
+                
+        except Exception as e:
+            logger.error(f"处理测试加入命令失败: {e}")
+            await message.reply_text(f"❌ 测试失败: {str(e)}")
+    
     async def _show_main_menu(self, message: Message):
         """显示主菜单"""
         try:
+            # 安全获取用户ID
+            if not message.from_user:
+                await message.reply_text("❌ 无法获取用户信息")
+                return
             user_id = str(message.from_user.id)
             
             # 获取用户统计信息
-            channel_pairs = await get_channel_pairs(user_id)
-            user_config = await get_user_config(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 构建菜单文本
             menu_text = f"""
@@ -360,6 +416,10 @@ class TelegramBot:
                 await self._handle_show_help(callback_query)
             elif data.startswith("add_channel_pair"):
                 await self._handle_add_channel_pair(callback_query)
+            elif data.startswith("private_wizard:"):
+                await self._handle_private_channel_wizard(callback_query)
+            elif data == "retry_channel_input":
+                await self._handle_retry_channel_input(callback_query)
             elif data.startswith("edit_channel_pair:"):
                 await self._handle_edit_channel_pair(callback_query)
             elif data.startswith("edit_pair_source:"):
@@ -408,6 +468,8 @@ class TelegramBot:
             elif data == "manage_replacement_words":
                 await self._handle_manage_replacement_words(callback_query)
             elif data == "manage_file_filter":
+                await self._handle_manage_file_filter(callback_query)
+            elif data == "show_file_filter_menu":
                 await self._handle_manage_file_filter(callback_query)
             elif data.startswith("request_tail_text"):
                 await self._handle_request_tail_text(callback_query)
@@ -546,8 +608,8 @@ class TelegramBot:
                 del self.user_states[user_id]
             
             # 获取用户统计信息
-            channel_pairs = await get_channel_pairs(user_id)
-            user_config = await get_user_config(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 构建菜单文本
             menu_text = f"""
@@ -581,7 +643,7 @@ class TelegramBot:
                 logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
                 del self.user_states[user_id]
             
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             if not channel_pairs:
                 await callback_query.edit_message_text(
@@ -715,7 +777,7 @@ class TelegramBot:
             pair_index = int(data.split(":")[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.answer("❌ 频道组不存在")
                 return
@@ -794,7 +856,7 @@ class TelegramBot:
     async def _show_multi_message_range_setup(self, callback_query: CallbackQuery, user_id: str, channel_index: int):
         """显示多任务消息ID段设置界面"""
         try:
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             multi_select_state = self.multi_select_states.get(user_id, {})
             selected_channels = multi_select_state.get('selected_channels', [])
             
@@ -873,7 +935,7 @@ class TelegramBot:
             
             # 获取当前频道组
             channel_key = selected_channels[current_channel_index]
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             pair_index = int(channel_key)
             pair = channel_pairs[pair_index]
             
@@ -937,7 +999,7 @@ class TelegramBot:
     async def _show_next_multi_message_range_setup(self, message: Message, user_id: str, channel_index: int):
         """显示下一个频道组的消息ID段设置界面"""
         try:
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             multi_select_state = self.multi_select_states.get(user_id, {})
             selected_channels = multi_select_state.get('selected_channels', [])
             
@@ -988,7 +1050,7 @@ class TelegramBot:
     async def _show_multi_task_confirmation_from_message(self, message: Message, user_id: str):
         """从消息输入显示多任务确认界面"""
         try:
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             multi_select_state = self.multi_select_states.get(user_id, {})
             selected_channels = multi_select_state.get('selected_channels', [])
             message_ranges = multi_select_state.get('message_ranges', {})
@@ -1067,7 +1129,7 @@ class TelegramBot:
                 return
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 创建多任务配置
             multi_task_configs = []
@@ -1703,7 +1765,7 @@ class TelegramBot:
     async def _init_channel_filters(self, user_id: str, pair_id: str) -> Dict[str, Any]:
         """初始化频道组过滤配置，默认读取全局配置"""
         try:
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 确保channel_filters结构存在
             if 'channel_filters' not in user_config:
@@ -1811,7 +1873,7 @@ class TelegramBot:
             # Save if any modifications were made
             if modified_channel_filters:
                 user_config['channel_filters'][pair_id] = channel_filters
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
             
             # 调试日志已注释以减少后台输出
             # logger.info(f"🔍 _init_channel_filters返回 - 频道组 {pair_id}:")
@@ -1837,8 +1899,7 @@ class TelegramBot:
             # 如果有用户ID，尝试从数据库获取保存的用户名
             if user_id and isinstance(chat_id, str) and chat_id.startswith('-100'):
                 try:
-                    from data_manager import get_channel_pairs
-                    channel_pairs = await get_channel_pairs(user_id)
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                     
                     # 查找包含该频道ID的频道组
                     for pair in channel_pairs:
@@ -2022,7 +2083,7 @@ class TelegramBot:
         """显示多任务搬运界面"""
         try:
             user_id = str(callback_query.from_user.id)
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             if not channel_pairs:
                 await callback_query.edit_message_text(
@@ -2137,7 +2198,7 @@ class TelegramBot:
     async def _show_next_message_range_setup(self, message: Message, user_id: str, channel_index: int):
         """显示下一个频道组的消息ID段设置界面"""
         try:
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             multi_task_state = self.multi_task_states.get(user_id, {})
             selected_channels = multi_task_state.get('selected_channels', [])
             
@@ -2232,7 +2293,7 @@ class TelegramBot:
                 logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
                 del self.user_states[user_id]
             
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 分页参数
             page_size = 30
@@ -2271,14 +2332,56 @@ class TelegramBot:
                     target_username = pair.get('target_username', '')
                     status = "✅" if pair.get('enabled', True) else "❌"
                     
-                    # 使用保存的用户名信息，如果没有则使用ID
-                    source_display = source_username if source_username else str(source_id)
-                    target_display = target_username if target_username else str(target_id)
+                    # 使用保存的用户名信息，格式化为 "频道名 (@用户名)" 的显示格式
+                    def format_channel_display(username, channel_id, name):
+                        # 如果有用户名且是@c/格式（私密频道）
+                        if username and username.startswith('@c/'):
+                            # 如果有频道名称且不是默认名称，显示为 "频道名 (@c/...)"
+                            if name and name != f'频道{i+1}' and name != f'目标{i+1}':
+                                return f"{name} ({username})"
+                            else:
+                                # 没有频道名称，直接显示私密频道链接
+                                return username
+                        
+                        # 如果有用户名且是普通用户名格式（公开频道），显示为 "频道名 (@用户名)"
+                        elif username and username.startswith('@') and not username.startswith('@c/'):
+                            # 优先使用频道名称，如果没有则使用用户名
+                            display_name = name if name and name != f'频道{i+1}' and name != f'目标{i+1}' else username
+                            return f"{display_name} ({username})"
+                        
+                        # 如果有用户名但不是@格式，添加@前缀
+                        elif username and not username.startswith('-') and username:
+                            display_name = name if name and name != f'频道{i+1}' and name != f'目标{i+1}' else f"@{username}"
+                            return f"{display_name} (@{username})"
+                        
+                        # 如果没有用户名，显示频道名称或ID
+                        else:
+                            if name and name != f'频道{i+1}' and name != f'目标{i+1}':
+                                return name
+                            else:
+                                return f"频道ID: {str(channel_id)[-8:]}"
+                    
+                    # 检查是否为私密频道
+                    is_private_source = pair.get('is_private_source', False)
+                    is_private_target = pair.get('is_private_target', False)
+                    
+                    source_display = format_channel_display(source_username, source_id, source_name)
+                    target_display = format_channel_display(target_username, target_id, target_name)
+                    
+                    # 添加私密频道标识
+                    if is_private_source:
+                        source_display += " 🔒"
+                    if is_private_target:
+                        target_display += " 🔒"
                     
                     # 显示频道组信息
                     config_text += f"\n{status} **频道组 {i+1}**"
-                    config_text += f"\n   📡 采集: {source_name} ({source_display})"
-                    config_text += f"\n   📤 发布: {target_name} ({target_display})"
+                    config_text += f"\n   📡 采集: {source_display}"
+                    config_text += f"\n   📤 发布: {target_display}"
+                    
+                    # 添加私密频道提示
+                    if is_private_source or is_private_target:
+                        config_text += f"\n   ⚠️ 包含私密频道，请确保机器人已加入"
             else:
                 config_text += "\n❌ 暂无频道组"
             
@@ -2346,7 +2449,7 @@ class TelegramBot:
                 logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
                 del self.user_states[user_id]
             
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 统计配置信息
             keywords_count = len(user_config.get('filter_keywords', []))
@@ -2457,7 +2560,7 @@ class TelegramBot:
         """处理显示监听菜单"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             monitor_enabled = user_config.get('monitor_enabled', False)
             monitored_pairs = user_config.get('monitored_pairs', [])
@@ -2534,7 +2637,7 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             
             # 获取历史记录
-            history = await data_manager.get_task_history(user_id, limit=10)
+            history = await self.data_manager.get_task_history(user_id, limit=10)
             
             if not history:
                 history_text = """
@@ -2555,6 +2658,8 @@ class TelegramBot:
                     task_id = record.get('id', '未知')
                     status = record.get('status', '未知')
                     created_at = record.get('created_at', '未知')
+                    source_chat_id = record.get('source_chat_id', '')
+                    target_chat_id = record.get('target_chat_id', '')
                     
                     # 格式化时间
                     try:
@@ -2563,7 +2668,46 @@ class TelegramBot:
                     except:
                         time_str = created_at
                     
-                    history_text += f"\n{i+1}. {status} - {time_str}"
+                    # 获取频道显示名称
+                    async def get_channel_display_name(chat_id):
+                        if not chat_id:
+                            return '未知频道'
+                        
+                        # 如果是用户名格式，直接返回
+                        if isinstance(chat_id, str) and chat_id.startswith('@'):
+                            return chat_id
+                        
+                        # 尝试从频道组配置中获取名称
+                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                        for pair in channel_pairs:
+                            if str(pair.get('source_id')) == str(chat_id):
+                                if pair.get('source_username') and pair.get('source_username').startswith('@'):
+                                    return pair.get('source_username')
+                                elif pair.get('source_name'):
+                                    return pair.get('source_name')
+                            elif str(pair.get('target_id')) == str(chat_id):
+                                if pair.get('target_username') and pair.get('target_username').startswith('@'):
+                                    return pair.get('target_username')
+                                elif pair.get('target_name'):
+                                    return pair.get('target_name')
+                        
+                        # 如果找不到，显示简化的ID
+                        return f"频道ID: {str(chat_id)[-8:]}"
+                    
+                    source_display = await get_channel_display_name(source_chat_id)
+                    target_display = await get_channel_display_name(target_chat_id)
+                    
+                    # 状态图标
+                    status_icon = {
+                        'completed': '✅',
+                        'failed': '❌',
+                        'running': '🔄',
+                        'paused': '⏸️',
+                        'cancelled': '🚫'
+                    }.get(status, '❓')
+                    
+                    history_text += f"\n{status_icon} **任务 {i+1}** ({time_str})"
+                    history_text += f"\n   📡 {source_display} → 📤 {target_display}"
                 
                 if len(history) > 5:
                     history_text += f"\n... 还有 {len(history) - 5} 条记录"
@@ -2583,7 +2727,7 @@ class TelegramBot:
         """处理查看配置"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取各种移除功能的详细状态
             content_removal_mode = user_config.get('content_removal_mode', 'text_only')
@@ -2722,7 +2866,7 @@ class TelegramBot:
             if data_part.isdigit():
                 # 索引格式：edit_channel_pair:0
                 pair_index = int(data_part)
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 
                 if pair_index >= len(channel_pairs):
                     await callback_query.edit_message_text("❌ 频道组不存在")
@@ -2733,7 +2877,7 @@ class TelegramBot:
             else:
                 # pair_id格式：edit_channel_pair:pair_0_1756487581
                 pair_id = data_part
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 
                 # 查找对应的频道组
                 pair = None
@@ -2790,7 +2934,7 @@ class TelegramBot:
             # 检查是否为pair_id格式
             if data_part.startswith('pair_'):
                 # 通过pair_id查找频道组
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 pair_index = None
                 pair_id = data_part
                 for i, pair in enumerate(channel_pairs):
@@ -2804,7 +2948,7 @@ class TelegramBot:
                 # 传统的索引格式
                 pair_index = int(data_part)
                 # 获取pair_id用于确认删除
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 if pair_index >= len(channel_pairs):
                     await callback_query.edit_message_text("❌ 频道组不存在")
                     return
@@ -2841,7 +2985,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -2850,8 +2994,8 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
-            # 删除频道组（data_manager.delete_channel_pair已经包含了配置清理逻辑）
-            success = await data_manager.delete_channel_pair(user_id, pair['id'])
+            # 删除频道组（self.data_manager.delete_channel_pair已经包含了配置清理逻辑）
+            success = await self.data_manager.delete_channel_pair(user_id, pair['id'])
             
             # 监听系统已移除，无需清理相关配置
             
@@ -2907,7 +3051,7 @@ class TelegramBot:
             pair_id = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             pair = None
             pair_index = None
             for i, p in enumerate(channel_pairs):
@@ -2923,8 +3067,8 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
-            # 删除频道组（data_manager.delete_channel_pair已经包含了配置清理逻辑）
-            success = await data_manager.delete_channel_pair(user_id, pair_id)
+            # 删除频道组（self.data_manager.delete_channel_pair已经包含了配置清理逻辑）
+            success = await self.data_manager.delete_channel_pair(user_id, pair_id)
             
             if success:
                 # 显示删除成功消息
@@ -3068,7 +3212,7 @@ class TelegramBot:
             pair_id = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             pair = None
             pair_index = None
             for i, p in enumerate(channel_pairs):
@@ -3122,7 +3266,7 @@ class TelegramBot:
             pair_id = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             pair = None
             pair_index = None
             for i, p in enumerate(channel_pairs):
@@ -3176,7 +3320,7 @@ class TelegramBot:
             pair_id = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             pair = None
             pair_index = None
             for i, p in enumerate(channel_pairs):
@@ -3191,7 +3335,7 @@ class TelegramBot:
             
             # 切换启用状态
             new_enabled = not pair.get('enabled', True)
-            success = await data_manager.update_channel_pair(user_id, pair_id, {'enabled': new_enabled})
+            success = await self.data_manager.update_channel_pair(user_id, pair_id, {'enabled': new_enabled})
             
             if success:
                 status_text = "✅ 已启用" if new_enabled else "❌ 已禁用"
@@ -3280,7 +3424,7 @@ class TelegramBot:
         """更新所有频道的用户名信息"""
         try:
             # 获取用户的所有频道组
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if not channel_pairs:
                 logger.warning(f"用户 {user_id} 没有频道组")
                 return 0
@@ -3315,7 +3459,7 @@ class TelegramBot:
             
             # 保存更新后的频道组信息
             if updated_count > 0:
-                success = await data_manager.save_channel_pairs(user_id, channel_pairs)
+                success = await self.data_manager.save_channel_pairs(user_id, channel_pairs)
                 if success:
                     logger.info(f"用户 {user_id} 频道信息更新成功，更新了 {updated_count} 个字段")
                 else:
@@ -3376,6 +3520,12 @@ class TelegramBot:
                     return
                 elif state['state'].startswith('edit_target:'):
                     await self._process_edit_target_input(message, state)
+                    return
+                elif state['state'].startswith('edit_source_by_id:'):
+                    await self._process_edit_source_by_id_input(message, state)
+                    return
+                elif state['state'].startswith('edit_target_by_id:'):
+                    await self._process_edit_target_by_id_input(message, state)
                     return
 
                 elif state['state'] == 'waiting_for_channel_keywords':
@@ -3443,66 +3593,11 @@ class TelegramBot:
             
             if not channel_id:
                 # 检查是否为私密频道链接
-                if '/c/' in channel_info:
-                    await message.reply_text(
-                        f"❌ **私密频道无法访问！**\n\n"
-                        f"📡 **频道链接：** {channel_info}\n"
-                        f"🔒 **问题：** 机器人无法访问该私密频道\n\n"
-                        f"💡 **私密频道使用要求：**\n"
-                        f"• 机器人必须已加入该私密频道\n"
-                        f"• 机器人需要有读取消息的权限\n"
-                        f"• 频道管理员需要邀请机器人加入\n\n"
-                        f"🔧 **解决方案：**\n"
-                        f"1. **邀请机器人加入私密频道**\n"
-                        f"   • 在私密频道中添加机器人\n"
-                        f"   • 确保机器人有读取消息权限\n\n"
-                        f"2. **使用频道ID（系统已自动转换）**\n"
-                        f"   • 系统已自动将链接转换为正确的ID格式\n"
-                        f"   • 如果仍然失败，请直接输入完整ID（如：-1001234567890）\n\n"
-                        f"3. **确认频道类型**\n"
-                        f"   • 确保是频道而不是群组\n"
-                        f"   • 私密群组无法用于搬运\n\n"
-                        f"⚠️ **注意：** 私密频道搬运需要机器人预先加入频道"
-                    )
-                elif channel_info.startswith('@'):
-                    await message.reply_text(
-                        f"❌ **无法访问频道！**\n\n"
-                        f"📡 **频道：** {channel_info}\n"
-                        f"🔍 **问题：** 机器人无法访问该频道\n\n"
-                        f"💡 **可能的原因：**\n"
-                        f"• 频道不存在或已被删除\n"
-                        f"• 频道是私密频道，机器人无法访问\n"
-                        f"• 机器人未加入该频道\n"
-                        f"• 频道用户名输入错误\n"
-                        f"• 频道已被封禁或限制\n"
-                        f"• 频道访问权限不足\n\n"
-                        f"🔧 **解决方案：**\n"
-                        f"• 检查频道用户名是否正确\n"
-                        f"• 尝试使用频道数字ID（系统会自动转换格式）\n"
-                        f"• 尝试使用频道链接：`https://t.me/channelname`\n"
-                        f"• 确保机器人已加入该频道\n"
-                        f"• 验证频道是否为公开频道\n"
-                        f"• 检查频道是否仍然活跃"
-                    )
+                is_private = self._detect_private_channel_format(channel_info)
+                if is_private:
+                    await self._show_private_channel_error(message, channel_info, "source")
                 else:
-                    await message.reply_text(
-                        f"❌ **无法访问频道！**\n\n"
-                        f"📡 **频道：** {channel_info}\n"
-                        f"🔍 **问题：** 机器人无法访问该频道\n\n"
-                        f"💡 **可能的原因：**\n"
-                        f"• 频道ID格式错误\n"
-                        f"• 频道不存在或已被删除\n"
-                        f"• 机器人未加入该频道\n"
-                        f"• 频道已被封禁或限制\n"
-                        f"• 频道访问权限不足\n\n"
-                        f"🔧 **解决方案：**\n"
-                        f"• 检查频道ID是否正确\n"
-                        f"• 尝试使用频道用户名：`@channelname`\n"
-                        f"• 尝试使用频道链接：`https://t.me/channelname`\n"
-                        f"• 确保机器人已加入该频道\n"
-                        f"• 验证频道是否为公开频道\n"
-                        f"• 检查频道是否仍然活跃"
-                    )
+                    await self._show_general_channel_error(message, channel_info)
                 return
             
             # 处理特殊标识：直接允许继续，无需确认
@@ -3765,12 +3860,14 @@ class TelegramBot:
                 target_username = await self._get_channel_username(pending_channel)
                 
                 # 添加频道组
-                success = await data_manager.add_channel_pair(
-                    user_id, source_id, pending_channel,
-                    source_channel.get('title', source_channel['info']), 
-                    pending_channel,
-                    source_username,  # 传递源频道用户名
-                    target_username   # 传递目标频道用户名
+                success = await self.data_manager.add_channel_pair(
+                    user_id, 
+                    source_username,  # 源频道用户名
+                    target_username,  # 目标频道用户名
+                    source_channel.get('title', source_channel['info']),  # 源频道显示名称
+                    pending_channel,  # 目标频道显示名称
+                    source_id,  # 源频道ID
+                    pending_channel  # 目标频道ID
                 )
                 
                 if success:
@@ -3885,13 +3982,31 @@ class TelegramBot:
             source_username = await self._get_channel_username(source_id)
             target_username = await self._get_channel_username(channel_id)
             
+            # 使用优化的显示格式："频道名 (@用户名)"
+            def format_channel_display(username, channel_id, name):
+                # 优先显示频道名称
+                display_name = name if name else f"频道ID: {str(channel_id)[-8:]}"
+                
+                # 如果有用户名，添加到显示名称后面
+                if username and username.startswith('@'):
+                    return f"{display_name} ({username})"
+                elif username:
+                    return f"{display_name} (@{username})"
+                else:
+                    return display_name
+            
+            source_display_name = format_channel_display(source_username, source_id, source_channel.get('title'))
+            target_display_name = format_channel_display(target_username, channel_id, target_channel.get('title'))
+            
             # 添加频道组
-            success = await data_manager.add_channel_pair(
-                user_id, source_id, channel_id,
-                source_channel.get('title', source_channel['info']), 
-                target_channel.get('title', channel_info),
-                source_username,  # 传递源频道用户名
-                target_username   # 传递目标频道用户名
+            success = await self.data_manager.add_channel_pair(
+                user_id, 
+                source_username,  # 源频道用户名
+                target_username,  # 目标频道用户名
+                source_display_name,  # 源频道显示名称
+                target_display_name,  # 目标频道显示名称
+                source_id,  # 源频道ID
+                channel_id  # 目标频道ID
             )
             
             if success:
@@ -3927,7 +4042,7 @@ class TelegramBot:
             else:
                 # 检查是否是因为重复添加
                 try:
-                    existing_pair = await data_manager.get_channel_pair_by_channels(user_id, source_id, channel_id)
+                    existing_pair = await self.data_manager.get_channel_pair_by_channels(user_id, source_id, channel_id)
                     if existing_pair:
                         await message.reply_text(
                             f"⚠️ **频道组已存在！**\n\n"
@@ -4008,10 +4123,10 @@ class TelegramBot:
                 
                 if pair_index is not None:
                     # 频道组特定设置
-                    user_config = await get_user_config(user_id)
+                    user_config = await self.data_manager.get_user_config(user_id)
                     
                     # 获取频道组信息
-                    channel_pairs = await get_channel_pairs(user_id)
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                     if pair_index >= len(channel_pairs):
                         await message.reply_text("❌ 频道组不存在")
                         return
@@ -4026,7 +4141,7 @@ class TelegramBot:
                     
                     # 清空频道组特定配置
                     user_config['channel_filters'][pair['id']]['tail_text'] = ''
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         "✅ 频道组附加文字已清空！\n\n现在该频道组的消息将不再添加附加文字。",
@@ -4036,9 +4151,9 @@ class TelegramBot:
                     )
                 else:
                     # 全局设置
-                    user_config = await get_user_config(user_id)
+                    user_config = await self.data_manager.get_user_config(user_id)
                     user_config['tail_text'] = ''
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         "✅ 附加文字已清空！\n\n现在消息将不再添加附加文字。",
@@ -4060,10 +4175,10 @@ class TelegramBot:
                     
                     if pair_index is not None:
                         # 频道组特定设置
-                        user_config = await get_user_config(user_id)
+                        user_config = await self.data_manager.get_user_config(user_id)
                         
                         # 获取频道组信息
-                        channel_pairs = await get_channel_pairs(user_id)
+                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                         if pair_index >= len(channel_pairs):
                             await message.reply_text("❌ 频道组不存在")
                             return
@@ -4078,16 +4193,16 @@ class TelegramBot:
                         
                         # 保存到频道组特定配置
                         user_config['channel_filters'][pair['id']]['tail_frequency'] = frequency
-                        await save_user_config(user_id, user_config)
+                        await self.data_manager.save_user_config(user_id, user_config)
                         
                         await message.reply_text(
                             f"✅ 频道组 {pair_index + 1} 附加文字频率已设置为：{frequency}%\n\n请继续输入要添加的文字内容。"
                         )
                     else:
                         # 全局设置
-                        user_config = await get_user_config(user_id)
+                        user_config = await self.data_manager.get_user_config(user_id)
                         user_config['tail_frequency'] = frequency
-                        await save_user_config(user_id, user_config)
+                        await self.data_manager.save_user_config(user_id, user_config)
                         
                         await message.reply_text(
                             f"✅ 附加文字频率已设置为：{frequency}%\n\n请继续输入要添加的文字内容。"
@@ -4104,10 +4219,10 @@ class TelegramBot:
             
             if pair_index is not None:
                 # 频道组特定设置
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 
                 # 获取频道组信息
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 if pair_index >= len(channel_pairs):
                     await message.reply_text("❌ 频道组不存在")
                     return
@@ -4125,7 +4240,7 @@ class TelegramBot:
                 user_config['channel_filters'][pair['id']]['tail_frequency'] = user_config.get('tail_frequency', 'always')
                 user_config['channel_filters'][pair['id']]['tail_position'] = user_config.get('tail_position', 'end')
                 
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ 频道组 {pair_index + 1} 附加文字设置成功！\n\n**当前文字：** {text}\n\n现在该频道组的消息将自动添加这个文字。",
@@ -4135,9 +4250,9 @@ class TelegramBot:
                 )
             else:
                 # 全局设置
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 user_config['tail_text'] = text
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ 附加文字设置成功！\n\n**当前文字：** {text}\n\n现在消息将自动添加这个文字。",
@@ -4161,9 +4276,9 @@ class TelegramBot:
             
             if text == "清空":
                 # 清空所有附加按钮
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 user_config['additional_buttons'] = []
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 # 清除用户状态
                 del self.user_states[user_id]
@@ -4179,7 +4294,7 @@ class TelegramBot:
             # 检查是否是删除按钮
             if text.startswith("删除 "):
                 button_text = text.split(" ", 1)[1].strip()
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 buttons = user_config.get('additional_buttons', [])
                 
                 # 查找并删除按钮
@@ -4188,7 +4303,7 @@ class TelegramBot:
                 
                 if len(buttons) < original_count:
                     user_config['additional_buttons'] = buttons
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         f"✅ 按钮 '{button_text}' 已删除！\n\n请继续输入要添加的按钮，格式：按钮文字|链接"
@@ -4202,9 +4317,9 @@ class TelegramBot:
             if text.startswith("频率:"):
                 frequency = text.split(":", 1)[1].strip()
                 if frequency in ['always', 'interval', 'random']:
-                    user_config = await get_user_config(user_id)
+                    user_config = await self.data_manager.get_user_config(user_id)
                     user_config['button_frequency'] = frequency
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     frequency_text = {
                         'always': '每条消息都添加',
@@ -4231,7 +4346,7 @@ class TelegramBot:
                     await message.reply_text("❌ 链接格式错误！请使用有效的HTTP链接或Telegram链接。")
                     return
                 
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 buttons = user_config.get('additional_buttons', [])
                 
                 # 检查是否已存在相同文字的按钮
@@ -4247,7 +4362,7 @@ class TelegramBot:
                 }
                 buttons.append(new_button)
                 user_config['additional_buttons'] = buttons
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ 按钮添加成功！\n\n**按钮：** {button_text}\n**链接：** {button_url}\n\n请继续添加更多按钮，或发送 '清空' 来清空所有按钮。"
@@ -4274,7 +4389,7 @@ class TelegramBot:
             logger.info(f"开始处理用户 {user_id} 的关键字过滤管理请求")
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             logger.info(f"成功获取用户 {user_id} 的配置")
             
             # 获取关键字列表
@@ -4331,7 +4446,7 @@ class TelegramBot:
         """处理文本内容移除开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换状态
             current_status = user_config.get('content_removal', False)
@@ -4339,7 +4454,7 @@ class TelegramBot:
             user_config['content_removal'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 先回答回调查询
             action_text = "启用" if new_status else "禁用"
@@ -4360,7 +4475,7 @@ class TelegramBot:
         """处理文本内容移除管理"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             content_removal_enabled = user_config.get('content_removal', False)
             content_removal_mode = user_config.get('content_removal_mode', 'text_only')
@@ -4408,7 +4523,7 @@ class TelegramBot:
         """处理文本内容移除模式设置"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 解析模式参数
             mode = callback_query.data.split(':')[1]
@@ -4430,7 +4545,7 @@ class TelegramBot:
             user_config['content_removal_mode'] = mode
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 模式描述
             mode_descriptions = {
@@ -4465,7 +4580,7 @@ class TelegramBot:
         """处理按钮移除开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换按钮过滤状态
             current_status = user_config.get('filter_buttons', False)
@@ -4473,7 +4588,7 @@ class TelegramBot:
             user_config['filter_buttons'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 状态文本
             action_text = "启用" if new_status else "禁用"
@@ -4496,7 +4611,7 @@ class TelegramBot:
         """处理按钮过滤管理"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             filter_mode = user_config.get('button_filter_mode', 'remove_buttons_only')
             filter_enabled = user_config.get('filter_buttons', False)
@@ -4544,7 +4659,7 @@ class TelegramBot:
         """处理按钮移除模式设置"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 解析模式参数
             mode = callback_query.data.split(':')[1]
@@ -4566,7 +4681,7 @@ class TelegramBot:
             user_config['button_filter_mode'] = mode
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 模式描述
             mode_descriptions = {
@@ -4601,7 +4716,7 @@ class TelegramBot:
         """处理敏感词替换管理"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             replacements = user_config.get('replacement_words', {})
             if replacements:
@@ -4651,7 +4766,7 @@ class TelegramBot:
             if ':' in data:
                 pair_index = int(data.split(':')[1])
                 # 获取频道组信息
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 if pair_index >= len(channel_pairs):
                     await callback_query.edit_message_text("❌ 频道组不存在")
                     return
@@ -4666,7 +4781,7 @@ class TelegramBot:
                 config_title = "✨ **全局附加文字设置**\n\n"
                 return_callback = "show_feature_config_menu"
             
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             current_tail = user_config.get('tail_text', '')
             current_frequency = user_config.get('tail_frequency', 100)
             
@@ -4713,7 +4828,7 @@ class TelegramBot:
             if ':' in data:
                 pair_index = int(data.split(':')[1])
                 # 获取频道组信息
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 if pair_index >= len(channel_pairs):
                     await callback_query.edit_message_text("❌ 频道组不存在")
                     return
@@ -4728,7 +4843,7 @@ class TelegramBot:
                 config_title = "📋 **全局附加按钮设置**\n\n"
                 return_callback = "show_feature_config_menu"
             
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             buttons = user_config.get('additional_buttons', [])
             current_frequency = user_config.get('button_frequency', 100)
             
@@ -4777,7 +4892,7 @@ class TelegramBot:
         """处理显示频率设置"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             tail_frequency = user_config.get('tail_frequency', 'always')
             button_frequency = user_config.get('button_frequency', 'always')
@@ -4818,7 +4933,7 @@ class TelegramBot:
         """处理移除所有链接开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换状态
             current_status = user_config.get('remove_all_links', False)
@@ -4826,7 +4941,7 @@ class TelegramBot:
             user_config['remove_all_links'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             status_text = "✅ 已开启" if new_status else "❌ 已关闭"
             message_text = f"""
@@ -4856,7 +4971,7 @@ class TelegramBot:
         """处理移除Hashtags开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换状态
             current_status = user_config.get('remove_hashtags', False)
@@ -4864,7 +4979,7 @@ class TelegramBot:
             user_config['remove_hashtags'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             status_text = "✅ 已开启" if new_status else "❌ 已关闭"
             message_text = f"""
@@ -4894,7 +5009,7 @@ class TelegramBot:
         """处理移除用户名开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换状态
             current_status = user_config.get('remove_usernames', False)
@@ -4902,7 +5017,7 @@ class TelegramBot:
             user_config['remove_usernames'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             status_text = "✅ 已开启" if new_status else "❌ 已关闭"
             message_text = f"""
@@ -4927,11 +5042,51 @@ class TelegramBot:
             logger.error(f"处理移除用户名开关失败: {e}")
             await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
     
+    async def _handle_manage_file_filter(self, callback_query: CallbackQuery):
+        """处理文件过滤管理"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            user_config = await self.data_manager.get_user_config(user_id)
+            
+            filter_photo = user_config.get('filter_photo', False)
+            filter_video = user_config.get('filter_video', False)
+            
+            photo_status = "✅ 已过滤" if filter_photo else "❌ 不过滤"
+            video_status = "✅ 已过滤" if filter_video else "❌ 不过滤"
+            
+            message_text = f"""
+📁 **文件过滤设置**
+
+🖼️ **图片过滤：** {photo_status}
+🎥 **视频过滤：** {video_status}
+
+💡 **功能说明：**
+• 开启过滤后，对应类型的消息将被跳过
+• 只保留其他类型的消息内容
+
+🔧 **请选择要设置的内容：**
+            """.strip()
+            
+            buttons = [
+                [("🖼️ 图片过滤", "toggle_filter_photo")],
+                [("🎥 视频过滤", "toggle_filter_video")],
+                [("🔙 返回功能配置", "show_feature_config_menu")]
+            ]
+            
+            await callback_query.edit_message_text(
+                message_text,
+                reply_markup=generate_button_layout(buttons)
+            )
+            
+        except Exception as e:
+            logger.error(f"处理文件过滤管理失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
     async def _handle_toggle_filter_photo(self, callback_query: CallbackQuery):
         """处理图片过滤开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换状态
             current_status = user_config.get('filter_photo', False)
@@ -4939,7 +5094,7 @@ class TelegramBot:
             user_config['filter_photo'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             status_text = "✅ 已过滤" if new_status else "❌ 不过滤"
             message_text = f"""
@@ -4969,7 +5124,7 @@ class TelegramBot:
         """处理视频过滤开关"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换状态
             current_status = user_config.get('filter_video', False)
@@ -4977,7 +5132,7 @@ class TelegramBot:
             user_config['filter_video'] = new_status
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             status_text = "✅ 已过滤" if new_status else "❌ 不过滤"
             message_text = f"""
@@ -5010,7 +5165,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -5020,7 +5175,7 @@ class TelegramBot:
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
             # 获取当前频率设置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             current_frequency = user_config.get('tail_frequency', 100)
             
             config_text = f"""
@@ -5066,7 +5221,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -5076,7 +5231,7 @@ class TelegramBot:
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
             # 获取当前频率设置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             current_frequency = user_config.get('button_frequency', 100)
             
             config_text = f"""
@@ -5143,9 +5298,9 @@ class TelegramBot:
             if frequency.isdigit():
                 freq_value = int(frequency)
                 if 1 <= freq_value <= 100:
-                    user_config = await get_user_config(user_id)
+                    user_config = await self.data_manager.get_user_config(user_id)
                     user_config['tail_frequency'] = freq_value
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     message_text = f"""
 {config_title}
@@ -5202,9 +5357,9 @@ class TelegramBot:
             if frequency.isdigit():
                 freq_value = int(frequency)
                 if 1 <= freq_value <= 100:
-                    user_config = await get_user_config(user_id)
+                    user_config = await self.data_manager.get_user_config(user_id)
                     user_config['button_frequency'] = freq_value
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     message_text = f"""
 {config_title}
@@ -5237,7 +5392,7 @@ class TelegramBot:
         """处理显示链接过滤菜单"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取当前状态
             links_status = "✅ 已开启" if user_config.get('remove_all_links', False) else "❌ 已关闭"
@@ -5283,7 +5438,7 @@ class TelegramBot:
         """处理链接过滤方式切换"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 切换过滤方式
             current_mode = user_config.get('remove_links_mode', 'links_only')
@@ -5291,7 +5446,7 @@ class TelegramBot:
             user_config['remove_links_mode'] = new_mode
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             mode_text = "🗑️ 移除整条消息" if new_mode == 'remove_message' else "📝 智能移除链接"
             message_text = f"""
@@ -5412,9 +5567,9 @@ class TelegramBot:
             
             if text == "清空":
                 # 清空所有替换规则
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 user_config['replacement_words'] = {}
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 # 清除用户状态
                 del self.user_states[user_id]
@@ -5430,13 +5585,13 @@ class TelegramBot:
             if text.startswith("删除 "):
                 # 删除指定替换规则
                 word_to_delete = text[3:].strip()
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 replacements = user_config.get('replacement_words', {})
                 
                 if word_to_delete in replacements:
                     del replacements[word_to_delete]
                     user_config['replacement_words'] = replacements
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         f"✅ 已删除敏感词替换规则：{word_to_delete}",
@@ -5456,11 +5611,11 @@ class TelegramBot:
                     
                     if old_word and new_word:
                         # 添加替换规则
-                        user_config = await get_user_config(user_id)
+                        user_config = await self.data_manager.get_user_config(user_id)
                         replacements = user_config.get('replacement_words', {})
                         replacements[old_word] = new_word
                         user_config['replacement_words'] = replacements
-                        await save_user_config(user_id, user_config)
+                        await self.data_manager.save_user_config(user_id, user_config)
                         
                         await message.reply_text(
                                             f"✅ 敏感词替换规则添加成功！\n\n`{old_word}` → `{new_word}`",
@@ -5500,9 +5655,9 @@ class TelegramBot:
             if text == "清空":
                 logger.info(f"用户 {user_id} 请求清空所有关键字")
                 # 清空所有关键字
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 user_config['filter_keywords'] = []
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 logger.info(f"用户 {user_id} 的关键字已清空")
                 
                 # 清除用户状态
@@ -5520,13 +5675,13 @@ class TelegramBot:
                 # 删除指定关键字
                 keyword_to_delete = text[3:].strip()
                 logger.info(f"用户 {user_id} 请求删除关键字: {keyword_to_delete}")
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 keywords = user_config.get('filter_keywords', [])
                 
                 if keyword_to_delete in keywords:
                     keywords.remove(keyword_to_delete)
                     user_config['filter_keywords'] = keywords
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     logger.info(f"用户 {user_id} 成功删除关键字: {keyword_to_delete}")
                     
                     await message.reply_text(
@@ -5543,7 +5698,7 @@ class TelegramBot:
             # 添加新关键字
             if text:
                 logger.info(f"用户 {user_id} 请求添加关键字: {text}")
-                user_config = await get_user_config(user_id)
+                user_config = await self.data_manager.get_user_config(user_id)
                 keywords = user_config.get('filter_keywords', [])
                 
                 # 支持逗号分割多个关键字
@@ -5556,7 +5711,7 @@ class TelegramBot:
                 if new_keywords:
                     keywords.extend(new_keywords)
                     user_config['filter_keywords'] = keywords
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     logger.info(f"用户 {user_id} 成功添加关键字: {new_keywords}")
                     
                     keywords_text = ", ".join([f"`{kw}`" for kw in new_keywords])
@@ -5592,7 +5747,7 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             mode = callback_query.data.split(":")[1]
             
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             user_config['content_removal_mode'] = mode
             
             # 保存配置 - 通过_init_channel_filters已经保存了，这里不需要重复保存
@@ -5622,11 +5777,11 @@ class TelegramBot:
         """处理清空附加按钮"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 清空附加按钮
             user_config['additional_buttons'] = []
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             await callback_query.edit_message_text(
                 "✅ 附加按钮已清空！\n\n"
@@ -5647,7 +5802,7 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             position = callback_query.data.split(":")[1]
             
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             user_config['tail_position'] = position
             
             # 保存配置 - 通过_init_channel_filters已经保存了，这里不需要重复保存
@@ -5780,10 +5935,267 @@ class TelegramBot:
             type_str = str(chat_type).lower()
             return type_str in ['channel', 'supergroup', 'chattype.channel', 'chattype.supergroup']
     
+    def _detect_private_channel_format(self, channel_info: str) -> bool:
+        """检测频道信息是否为私密频道格式"""
+        try:
+            if not channel_info:
+                return False
+            
+            # 检查私密频道链接格式
+            if '/c/' in channel_info:
+                return True
+            
+            # 检查@c/格式
+            if channel_info.startswith('@c/'):
+                return True
+            
+            # 检查PENDING_@c/格式
+            if channel_info.startswith('PENDING_@c/'):
+                return True
+            
+            # 检查长数字ID（可能是私密频道）
+            if channel_info.startswith('-100') and len(channel_info) > 10:
+                return True
+            
+            return False
+        except Exception as e:
+            logger.warning(f"检测私密频道格式失败: {e}")
+            return False
+    
+    async def _check_channel_permissions(self, channel_id: str, channel_type: str = "source") -> Dict[str, Any]:
+        """检查频道权限"""
+        try:
+            result = {
+                'can_access': False,
+                'can_read': False,
+                'can_post': False,
+                'is_private': False,
+                'error': None
+            }
+            
+            try:
+                # 获取频道信息
+                chat = await self.client.get_chat(channel_id)
+                result['is_private'] = self._detect_private_channel_format(str(channel_id))
+                
+                # 检查机器人成员信息
+                member = await self.client.get_chat_member(channel_id, "me")
+                
+                if channel_type == "source":
+                    # 源频道需要读取权限
+                    result['can_read'] = getattr(member, 'can_read_messages', True)
+                    result['can_access'] = result['can_read']
+                else:
+                    # 目标频道需要发送权限
+                    result['can_post'] = getattr(member, 'can_post_messages', True)
+                    result['can_send'] = getattr(member, 'can_send_messages', True)
+                    result['can_access'] = result['can_post'] or result['can_send']
+                
+                logger.info(f"频道 {channel_id} 权限检查: {result}")
+                
+            except Exception as e:
+                error_msg = str(e)
+                result['error'] = error_msg
+                
+                # 分析错误类型
+                if "PEER_ID_INVALID" in error_msg:
+                    result['error'] = "频道不存在或机器人未加入"
+                elif "CHAT_ADMIN_REQUIRED" in error_msg:
+                    result['error'] = "需要管理员权限"
+                elif "CHANNEL_PRIVATE" in error_msg:
+                    result['error'] = "私密频道，机器人未加入"
+                elif "USER_NOT_PARTICIPANT" in error_msg:
+                    result['error'] = "机器人未加入频道"
+                else:
+                    result['error'] = f"权限检查失败: {error_msg}"
+                
+                logger.warning(f"频道 {channel_id} 权限检查失败: {result['error']}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"检查频道权限失败: {e}")
+            return {
+                'can_access': False,
+                'can_read': False,
+                'can_post': False,
+                'is_private': False,
+                'error': f"权限检查异常: {str(e)}"
+            }
+    
+    async def _show_private_channel_error(self, message: Message, channel_info: str, channel_type: str):
+        """显示私密频道错误信息"""
+        try:
+            channel_type_name = "源频道" if channel_type == "source" else "目标频道"
+            permission_type = "读取消息" if channel_type == "source" else "发送消息"
+            
+            error_text = f"""❌ **私密{channel_type_name}无法访问！**
+
+📡 **频道信息：** {channel_info}
+🔒 **问题：** 机器人无法访问该私密频道
+
+💡 **私密频道使用要求：**
+• 机器人必须已加入该私密频道
+• 机器人需要有{permission_type}的权限
+• 频道管理员需要邀请机器人加入
+
+🔧 **解决方案：**
+
+1. **邀请机器人加入私密频道**
+   • 在私密频道中添加机器人
+   • 确保机器人有{permission_type}权限
+
+2. **使用频道ID（系统已自动转换）**
+   • 系统已自动将链接转换为正确的ID格式
+   • 如果仍然失败，请直接输入完整ID（如：-1001234567890）
+
+3. **确认频道类型**
+   • 确保是频道而不是群组
+   • 私密群组无法用于搬运
+
+⚠️ **注意：** 私密频道搬运需要机器人预先加入频道
+
+🔄 **重试步骤：**
+1. 邀请机器人加入频道
+2. 重新输入频道信息
+3. 或使用频道数字ID
+
+💡 **需要帮助？** 点击下方按钮查看详细设置向导"""
+            
+            # 添加设置向导按钮
+            from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            buttons = [
+                [InlineKeyboardButton("🔒 私密频道设置向导", callback_data=f"private_wizard:{channel_type}")],
+                [InlineKeyboardButton("🔄 重新输入", callback_data="retry_channel_input")]
+            ]
+            
+            await message.reply_text(error_text, reply_markup=InlineKeyboardMarkup(buttons))
+            
+        except Exception as e:
+            logger.error(f"显示私密频道错误信息失败: {e}")
+            await message.reply_text("❌ 私密频道无法访问，请检查机器人权限")
+    
+    async def _show_general_channel_error(self, message: Message, channel_info: str):
+        """显示一般频道错误信息"""
+        try:
+            error_text = f"""❌ **无法访问频道！**
+
+📡 **频道：** {channel_info}
+🔍 **问题：** 机器人无法访问该频道
+
+💡 **可能的原因：**
+• 频道不存在或已被删除
+• 频道是私密频道，机器人无法访问
+• 机器人未加入该频道
+• 频道用户名输入错误
+• 频道已被封禁或限制
+• 频道访问权限不足
+
+🔧 **解决方案：**
+• 检查频道用户名是否正确
+• 尝试使用频道数字ID（系统会自动转换格式）
+• 尝试使用频道链接：`https://t.me/channelname`
+• 确保机器人已加入该频道
+• 验证频道是否为公开频道
+• 检查频道是否仍然活跃
+
+🔄 **重试步骤：**
+1. 确认频道信息正确
+2. 邀请机器人加入频道（如果是私密频道）
+3. 重新输入频道信息"""
+            
+            await message.reply_text(error_text)
+            
+        except Exception as e:
+            logger.error(f"显示一般频道错误信息失败: {e}")
+            await message.reply_text("❌ 无法访问频道，请检查频道信息")
+    
+    async def _show_private_channel_wizard(self, message: Message, channel_type: str):
+        """显示私密频道设置向导"""
+        try:
+            channel_type_name = "源频道" if channel_type == "source" else "目标频道"
+            permission_type = "读取消息" if channel_type == "source" else "发送消息"
+            
+            wizard_text = f"""🔒 **私密{channel_type_name}设置向导**
+
+📋 **设置步骤：**
+
+**第一步：邀请机器人加入频道**
+1. 打开您的私密频道
+2. 点击频道名称进入频道信息
+3. 点击"管理员"或"成员"
+4. 点击"添加管理员"或"添加成员"
+5. 搜索并添加机器人：`@your_bot_username`
+6. 确保机器人有{permission_type}权限
+
+**第二步：获取频道信息**
+• **频道链接格式：** `https://t.me/c/1234567890`
+• **频道ID格式：** `-1001234567890`
+• **用户名格式：** `@channelname`（如果有）
+
+**第三步：输入频道信息**
+请选择以下方式之一：
+• 发送频道链接
+• 发送频道ID
+• 发送频道用户名
+
+💡 **提示：**
+• 私密频道链接通常包含 `/c/` 字符
+• 频道ID通常以 `-100` 开头
+• 确保机器人已加入频道并有相应权限
+
+⚠️ **注意事项：**
+• 私密频道需要机器人预先加入
+• 确保机器人有足够的权限
+• 如果设置失败，请检查权限设置
+
+🔄 **现在请发送您的{channel_type_name}信息：**"""
+            
+            await message.reply_text(wizard_text)
+            
+        except Exception as e:
+            logger.error(f"显示私密频道设置向导失败: {e}")
+            await message.reply_text("❌ 显示设置向导失败，请稍后重试")
+    
+    async def _handle_private_channel_wizard(self, callback_query: CallbackQuery):
+        """处理私密频道设置向导"""
+        try:
+            data = callback_query.data
+            channel_type = data.split(':')[1] if ':' in data else "source"
+            
+            await callback_query.answer()
+            await self._show_private_channel_wizard(callback_query.message, channel_type)
+            
+        except Exception as e:
+            logger.error(f"处理私密频道设置向导失败: {e}")
+            await callback_query.answer("❌ 处理失败，请稍后重试")
+    
+    async def _handle_retry_channel_input(self, callback_query: CallbackQuery):
+        """处理重新输入频道信息"""
+        try:
+            await callback_query.answer()
+            await callback_query.edit_message_text(
+                "🔄 **重新输入频道信息**\n\n"
+                "请发送您的频道信息：\n"
+                "• 频道链接：`https://t.me/channelname`\n"
+                "• 频道用户名：`@channelname`\n"
+                "• 频道ID：`-1001234567890`\n\n"
+                "💡 **提示：** 私密频道需要机器人预先加入"
+            )
+            
+        except Exception as e:
+            logger.error(f"处理重新输入频道信息失败: {e}")
+            await callback_query.answer("❌ 处理失败，请稍后重试")
+    
     async def _validate_channel_access(self, channel_info: str) -> Optional[str]:
         """验证频道是否存在并可访问，返回频道ID（采用宽松策略）"""
         try:
             logger.info(f"开始验证频道访问: {channel_info}")
+            
+            # 检测私密频道
+            is_private = self._detect_private_channel_format(channel_info)
+            if is_private:
+                logger.info(f"检测到私密频道格式: {channel_info}")
             
             # 如果是数字ID，直接返回
             if channel_info.startswith('-') and channel_info[1:].isdigit():
@@ -5935,7 +6347,7 @@ class TelegramBot:
             # 检查是否为pair_id格式
             if data_part.startswith('pair_'):
                 # 通过pair_id查找频道组
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 pair_index = None
                 for i, pair in enumerate(channel_pairs):
                     if pair.get('id') == data_part:
@@ -5949,7 +6361,7 @@ class TelegramBot:
                 pair_index = int(data_part)
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -5959,7 +6371,7 @@ class TelegramBot:
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取小尾巴和按钮配置
             tail_text = user_config.get('tail_text', '')
@@ -6009,7 +6421,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6039,7 +6451,7 @@ class TelegramBot:
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取频道组独立配置
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
@@ -6101,7 +6513,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6131,7 +6543,7 @@ class TelegramBot:
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取频道组独立配置
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
@@ -6203,7 +6615,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6233,7 +6645,7 @@ class TelegramBot:
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -6330,7 +6742,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6359,7 +6771,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取该频道组的关键字过滤配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
             independent_enabled = channel_filters.get('independent_enabled', False)
             
@@ -6428,7 +6840,7 @@ class TelegramBot:
             text = message.text.strip()
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await message.reply("❌ 频道组不存在")
                 return
@@ -6436,7 +6848,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -6453,7 +6865,7 @@ class TelegramBot:
                 if 'channel_filters' not in user_config:
                     user_config['channel_filters'] = {}
                 user_config['channel_filters'][pair['id']] = channel_filters
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ **关键字过滤状态已切换！**\n\n"
@@ -6474,7 +6886,7 @@ class TelegramBot:
                 if 'channel_filters' not in user_config:
                     user_config['channel_filters'] = {}
                 user_config['channel_filters'][pair['id']] = channel_filters
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ **关键字已清空！**\n\n"
@@ -6501,7 +6913,7 @@ class TelegramBot:
                     if 'channel_filters' not in user_config:
                         user_config['channel_filters'] = {}
                     user_config['channel_filters'][pair['id']] = channel_filters
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         f"✅ **关键字已删除！**\n\n"
@@ -6534,7 +6946,7 @@ class TelegramBot:
                     if 'channel_filters' not in user_config:
                         user_config['channel_filters'] = {}
                     user_config['channel_filters'][pair['id']] = channel_filters
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         f"✅ **关键字已添加！**\n\n"
@@ -6576,7 +6988,7 @@ class TelegramBot:
             text = message.text.strip()
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await message.reply("❌ 频道组不存在")
                 return
@@ -6584,7 +6996,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -6600,7 +7012,7 @@ class TelegramBot:
                 if 'channel_filters' not in user_config:
                     user_config['channel_filters'] = {}
                 user_config['channel_filters'][pair['id']] = channel_filters
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ **替换规则已清空！**\n\n"
@@ -6624,7 +7036,7 @@ class TelegramBot:
                 if 'channel_filters' not in user_config:
                     user_config['channel_filters'] = {}
                 user_config['channel_filters'][pair['id']] = channel_filters
-                await save_user_config(user_id, user_config)
+                await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ **替换功能状态已切换！**\n\n"
@@ -6653,7 +7065,7 @@ class TelegramBot:
                     if 'channel_filters' not in user_config:
                         user_config['channel_filters'] = {}
                     user_config['channel_filters'][pair['id']] = channel_filters
-                    await save_user_config(user_id, user_config)
+                    await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         f"✅ **替换规则已添加！**\n\n"
@@ -6708,7 +7120,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6737,7 +7149,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取该频道组的敏感词替换配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
             replacements = channel_filters.get('replacements', {})
             replacements_enabled = channel_filters.get('replacements_enabled', False)
@@ -6787,7 +7199,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6816,7 +7228,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取该频道组的文本内容移除配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
             content_removal = channel_filters.get('content_removal', False)
             content_removal_mode = channel_filters.get('content_removal_mode', 'text_only')
@@ -6865,7 +7277,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -6873,7 +7285,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -6889,7 +7301,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             await callback_query.answer(f"✅ 文本内容移除已{'启用' if new_status else '禁用'}")
             
@@ -6909,7 +7321,7 @@ class TelegramBot:
             mode = data_parts[2]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -6917,7 +7329,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -6932,7 +7344,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             mode_descriptions = {
                 'text_only': '仅移除纯文本',
@@ -6969,7 +7381,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -6998,7 +7410,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取该频道组的链接移除配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
             links_removal = channel_filters.get('links_removal', False)
             links_removal_mode = channel_filters.get('links_removal_mode', 'links_only')
@@ -7043,7 +7455,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -7072,7 +7484,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取该频道组的用户名移除配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
             usernames_removal = channel_filters.get('usernames_removal', False)
             
@@ -7111,7 +7523,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -7140,7 +7552,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取该频道组的按钮移除配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
             buttons_removal = channel_filters.get('buttons_removal', False)
             buttons_removal_mode = channel_filters.get('buttons_removal_mode', 'remove_buttons_only')
@@ -7190,7 +7602,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -7198,7 +7610,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -7214,7 +7626,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             await callback_query.answer(f"✅ 链接移除已{'启用' if new_status else '禁用'}")
             
@@ -7234,7 +7646,7 @@ class TelegramBot:
             mode = data_parts[2]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -7242,7 +7654,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -7257,7 +7669,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             mode_descriptions = {
                 'links_only': '智能移除链接',
@@ -7295,7 +7707,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -7303,7 +7715,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -7319,7 +7731,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             await callback_query.answer(f"✅ 用户名移除已{'启用' if new_status else '禁用'}")
             
@@ -7337,7 +7749,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -7345,7 +7757,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -7361,7 +7773,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             await callback_query.answer(f"✅ 按钮移除已{'启用' if new_status else '禁用'}")
             
@@ -7381,7 +7793,7 @@ class TelegramBot:
             mode = data_parts[2]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -7389,7 +7801,7 @@ class TelegramBot:
             pair = channel_pairs[pair_index]
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             if not user_config:
                 user_config = {}
             
@@ -7404,7 +7816,7 @@ class TelegramBot:
             if 'channel_filters' not in user_config:
                 user_config['channel_filters'] = {}
             user_config['channel_filters'][pair['id']] = channel_filters
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             mode_descriptions = {
                 'remove_buttons_only': '仅移除按钮',
@@ -7442,7 +7854,7 @@ class TelegramBot:
             data_part = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 判断传入的是pair_id还是pair_index
             pair_index = None
@@ -7471,7 +7883,7 @@ class TelegramBot:
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 确保channel_filters结构存在
             if 'channel_filters' not in user_config:
@@ -7568,7 +7980,7 @@ class TelegramBot:
             user_config['channel_filters'][pair['id']] = channel_filters
             
             # 保存配置
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             await callback_query.edit_message_text(
                 config_text,
@@ -7586,7 +7998,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
@@ -7663,16 +8075,23 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             if pair_index >= len(channel_pairs):
                 await callback_query.edit_message_text("❌ 频道组不存在")
                 return
             
             pair = channel_pairs[pair_index]
-            source_id = pair.get('source_id')
-            target_id = pair.get('target_id')
+            # 优先使用用户名，如果没有则使用ID
+            source_username = pair.get('source_username', '')
+            target_username = pair.get('target_username', '')
+            source_id = pair.get('source_id', '')
+            target_id = pair.get('target_id', '')
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             target_name = pair.get('target_name', f'目标{pair_index+1}')
+            
+            # 确定实际使用的频道标识符
+            actual_source_id = source_username if source_username else source_id
+            actual_target_id = target_username if target_username else target_id
             
             # 检查搬运引擎是否初始化
             if not self.cloning_engine:
@@ -7704,13 +8123,13 @@ class TelegramBot:
                 # 创建搬运任务（搬运最近的消息）
                 logger.info(f"正在创建搬运任务...")
                 task = await self.cloning_engine.create_task(
-                    source_chat_id=source_id,
-                    target_chat_id=target_id,
+                    source_chat_id=actual_source_id,
+                    target_chat_id=actual_target_id,
                     start_id=None,  # 从最近的消息开始
                     end_id=None,    # 不限制结束ID
                     config=task_config,
-                    source_username=pair.get('source_username', ''),
-                    target_username=pair.get('target_username', '')
+                    source_username=source_username,
+                    target_username=target_username
                 )
                 
                 if task:
@@ -8045,6 +8464,14 @@ class TelegramBot:
                         start_id = parsed_info['ids'][0]
                         end_id = parsed_info['ids'][0]
                         logger.info(f"使用单个ID搬运: {start_id}")
+                    
+                    # 获取频道组信息
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                    if pair_index >= len(channel_pairs):
+                        await callback_query.edit_message_text("❌ 频道组不存在")
+                        return
+                    
+                    pair = channel_pairs[pair_index]
                     
                     # 创建任务配置
                     task_config = {
@@ -9107,7 +9534,7 @@ class TelegramBot:
         """处理切换实时监听状态"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取当前监听状态
             current_status = user_config.get('monitor_enabled', False)
@@ -9115,7 +9542,7 @@ class TelegramBot:
             
             # 更新配置
             user_config['monitor_enabled'] = new_status
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 监听系统已移除，显示状态更新
             status_text = "✅ 设置已更新" if new_status else "❌ 监听已停用"
@@ -9157,10 +9584,10 @@ class TelegramBot:
         """处理管理监听频道"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 获取用户的频道组配置
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             monitored_pairs = user_config.get('monitored_pairs', [])
             
             logger.info(f"管理监听频道 - 用户: {user_id}, 频道对数量: {len(channel_pairs)}, 监听对数量: {len(monitored_pairs)}")
@@ -9264,10 +9691,10 @@ class TelegramBot:
         try:
             user_id = str(callback_query.from_user.id)
             pair_index = int(callback_query.data.split(':')[1])
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 使用与管理界面相同的数据源
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             monitored_pairs = user_config.get('monitored_pairs', [])
             
             # 添加调试信息
@@ -9329,7 +9756,7 @@ class TelegramBot:
             
             # 保存配置
             user_config['monitored_pairs'] = monitored_pairs
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 如果监听功能已启用，更新监听系统
             if user_config.get('monitor_enabled', False) and self.monitor_system:
@@ -9351,10 +9778,10 @@ class TelegramBot:
         """处理全选监听频道"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 使用与管理界面相同的数据源
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             if not channel_pairs:
                 await callback_query.answer("❌ 没有可选择的频道")
@@ -9378,7 +9805,7 @@ class TelegramBot:
                 monitored_pairs.append(monitor_pair)
             
             user_config['monitored_pairs'] = monitored_pairs
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 监听系统已移除
             
@@ -9395,11 +9822,11 @@ class TelegramBot:
         """处理全不选监听频道"""
         try:
             user_id = str(callback_query.from_user.id)
-            user_config = await get_user_config(user_id)
+            user_config = await self.data_manager.get_user_config(user_id)
             
             # 清空监听频道
             user_config['monitored_pairs'] = []
-            await save_user_config(user_id, user_config)
+            await self.data_manager.save_user_config(user_id, user_config)
             
             # 监听系统已移除
             
@@ -9490,7 +9917,7 @@ class TelegramBot:
             pair_id = callback_query.data.split(':')[1]
             
             # 获取频道组信息
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             pair_index = None
             
             # 查找频道组索引
@@ -9518,7 +9945,7 @@ class TelegramBot:
             pair_index = int(callback_query.data.split(':')[1])
             
             # 获取频道组列表
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 检查索引是否有效
             if 0 <= pair_index < len(channel_pairs):
@@ -9529,7 +9956,7 @@ class TelegramBot:
                 pair['enabled'] = not current_enabled
                 
                 # 保存更新后的频道组列表
-                success = await data_manager.save_channel_pairs(user_id, channel_pairs)
+                success = await self.data_manager.save_channel_pairs(user_id, channel_pairs)
                 
                 if success:
                     status_text = "✅ 已启用" if pair['enabled'] else "❌ 已禁用"
@@ -9557,7 +9984,7 @@ class TelegramBot:
             pair_id = callback_query.data.split(':')[1]
             
             # 获取频道组列表
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             # 查找并更新频道组状态
             pair_found = False
@@ -9569,7 +9996,7 @@ class TelegramBot:
                     pair_found = True
                     
                     # 保存更新后的频道组列表
-                    success = await data_manager.save_channel_pairs(user_id, channel_pairs)
+                    success = await self.data_manager.save_channel_pairs(user_id, channel_pairs)
                     
                     if success:
                         status_text = "✅ 已启用" if pair['enabled'] else "❌ 已禁用"
@@ -9600,15 +10027,15 @@ class TelegramBot:
             # 检查是否是确认操作
             if callback_query.data == "confirm_clear_all_channels":
                 # 执行清空操作
-                channel_pairs = await get_channel_pairs(user_id)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
                 deleted_count = len(channel_pairs)
                 
                 # 清空频道组列表
-                success = await data_manager.save_channel_pairs(user_id, [])
+                success = await self.data_manager.save_channel_pairs(user_id, [])
                 
                 if success:
                     # 清空所有频道过滤配置
-                    await data_manager.clear_all_channel_filter_configs(user_id)
+                    await self.data_manager.clear_all_channel_filter_configs(user_id)
                     
                     # 显示成功信息
                     text = f"🗑️ **一键清空完成！**\n\n"
@@ -9638,7 +10065,7 @@ class TelegramBot:
                 return
             
             # 显示确认界面
-            channel_pairs = await get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             
             if not channel_pairs:
                 await callback_query.edit_message_text(
@@ -9741,7 +10168,7 @@ class TelegramBot:
             channel_id = await self._validate_channel_access(channel_info)
             
             # 获取当前频道组列表
-            channel_pairs = await data_manager.get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.self.data_manager.get_channel_pairs(user_id)
             
             if pair_index >= len(channel_pairs):
                 await message.reply_text("❌ 频道组不存在，请重新操作。")
@@ -9754,11 +10181,23 @@ class TelegramBot:
                 try:
                     chat = await self.app.get_chat(channel_id)
                     channel_pairs[pair_index]['source_id'] = str(channel_id)
-                    channel_pairs[pair_index]['source_name'] = chat.title or ""
                     channel_pairs[pair_index]['source_username'] = chat.username or ""
+                    # 使用优化的显示格式："频道名 (@用户名)"
+                    def format_channel_display(username, channel_id, name):
+                        # 优先显示频道名称
+                        display_name = name if name else f"频道ID: {str(channel_id)[-8:]}"
+                        
+                        # 如果有用户名，添加到显示名称后面
+                        if username and username.startswith('@'):
+                            return f"{display_name} ({username})"
+                        elif username:
+                            return f"{display_name} (@{username})"
+                        else:
+                            return display_name
+                    channel_pairs[pair_index]['source_name'] = format_channel_display(chat.username, channel_id, chat.title)
                 except:
                     channel_pairs[pair_index]['source_id'] = str(channel_id)
-                    channel_pairs[pair_index]['source_name'] = "未知频道"
+                    channel_pairs[pair_index]['source_name'] = f"频道ID: {str(channel_id)[-8:]}"
                     channel_pairs[pair_index]['source_username'] = ""
             else:
                 # 即使验证失败也允许保存
@@ -9767,7 +10206,7 @@ class TelegramBot:
                 channel_pairs[pair_index]['source_username'] = ""
             
             # 保存更新
-            await data_manager.save_channel_pairs(user_id, channel_pairs)
+            await self.data_manager.save_channel_pairs(user_id, channel_pairs)
             
             # 清除用户状态
             del self.user_states[user_id]
@@ -9814,7 +10253,7 @@ class TelegramBot:
             channel_id = await self._validate_channel_access(channel_info)
             
             # 获取当前频道组列表
-            channel_pairs = await data_manager.get_channel_pairs(user_id)
+            channel_pairs = await self.data_manager.self.data_manager.get_channel_pairs(user_id)
             
             if pair_index >= len(channel_pairs):
                 await message.reply_text("❌ 频道组不存在，请重新操作。")
@@ -9827,11 +10266,23 @@ class TelegramBot:
                 try:
                     chat = await self.app.get_chat(channel_id)
                     channel_pairs[pair_index]['target_id'] = str(channel_id)
-                    channel_pairs[pair_index]['target_name'] = chat.title or ""
                     channel_pairs[pair_index]['target_username'] = chat.username or ""
+                    # 使用优化的显示格式："频道名 (@用户名)"
+                    def format_channel_display(username, channel_id, name):
+                        # 优先显示频道名称
+                        display_name = name if name else f"频道ID: {str(channel_id)[-8:]}"
+                        
+                        # 如果有用户名，添加到显示名称后面
+                        if username and username.startswith('@'):
+                            return f"{display_name} ({username})"
+                        elif username:
+                            return f"{display_name} (@{username})"
+                        else:
+                            return display_name
+                    channel_pairs[pair_index]['target_name'] = format_channel_display(chat.username, channel_id, chat.title)
                 except:
                     channel_pairs[pair_index]['target_id'] = str(channel_id)
-                    channel_pairs[pair_index]['target_name'] = "未知频道"
+                    channel_pairs[pair_index]['target_name'] = f"频道ID: {str(channel_id)[-8:]}"
                     channel_pairs[pair_index]['target_username'] = ""
             else:
                 # 即使验证失败也允许保存
@@ -9840,7 +10291,7 @@ class TelegramBot:
                 channel_pairs[pair_index]['target_username'] = ""
             
             # 保存更新
-            await data_manager.save_channel_pairs(user_id, channel_pairs)
+            await self.data_manager.save_channel_pairs(user_id, channel_pairs)
             
             # 清除用户状态
             del self.user_states[user_id]
@@ -9862,6 +10313,382 @@ class TelegramBot:
             await message.reply_text("❌ 处理失败，请稍后重试")
             if user_id in self.user_states:
                 del self.user_states[user_id]
+
+    async def _process_edit_source_by_id_input(self, message: Message, state: Dict[str, Any]):
+        """处理通过pair_id编辑来源频道的输入"""
+        try:
+            user_id = str(message.from_user.id)
+            pair_id = state.get('pair_id')
+            pair_index = state.get('pair_index', 0)
+            channel_info = message.text.strip()
+            
+            if not channel_info:
+                await message.reply_text("❌ 请输入有效的频道信息")
+                return
+            
+            # 验证频道访问权限
+            validated_channel_id = await self._validate_channel_access(channel_info)
+            if not validated_channel_id:
+                await message.reply_text("❌ 无法访问该频道，请检查频道链接或权限")
+                return
+            
+            # 获取频道信息
+            try:
+                chat = await self.client.get_chat(validated_channel_id)
+                channel_name = chat.title or f"频道{pair_index+1}"
+                channel_username = getattr(chat, 'username', '')
+                if channel_username:
+                    channel_username = f"@{channel_username}"
+                else:
+                    # 私密频道格式
+                    if validated_channel_id.startswith('-100'):
+                        channel_username = f"@c/{validated_channel_id[4:]}"
+                    else:
+                        channel_username = f"@c/{validated_channel_id}"
+            except Exception as e:
+                logger.warning(f"获取频道信息失败: {e}")
+                channel_name = f"频道{pair_index+1}"
+                channel_username = channel_info
+            
+            # 更新频道组
+            updates = {
+                'source_id': validated_channel_id,
+                'source_name': channel_name,
+                'source_username': channel_username,
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            success = await self.data_manager.update_channel_pair(user_id, pair_id, updates)
+            
+            if not success:
+                await message.reply_text("❌ 更新频道组失败，请稍后重试")
+                return
+            
+            # 清除用户状态
+            del self.user_states[user_id]
+            
+            # 显示成功消息
+            await message.reply_text(
+                f"✅ **来源频道更新成功！**\n\n"
+                f"📝 **频道组 {pair_index + 1}**\n"
+                f"📡 **新的来源频道：** {channel_name}\n"
+                f"🔗 **频道标识：** {channel_username}\n\n"
+                f"💡 您可以继续管理其他频道组。",
+                reply_markup=generate_button_layout([[
+                    ("⚙️ 频道管理", "show_channel_config_menu"),
+                    ("🔙 返回主菜单", "show_main_menu")
+                ]])
+            )
+            
+        except Exception as e:
+            logger.error(f"处理编辑来源频道输入失败: {e}")
+            await message.reply_text("❌ 处理失败，请稍后重试")
+            if user_id in self.user_states:
+                del self.user_states[user_id]
+
+    async def _process_edit_target_by_id_input(self, message: Message, state: Dict[str, Any]):
+        """处理通过pair_id编辑目标频道的输入"""
+        try:
+            user_id = str(message.from_user.id)
+            pair_id = state.get('pair_id')
+            pair_index = state.get('pair_index', 0)
+            channel_info = message.text.strip()
+            
+            if not channel_info:
+                await message.reply_text("❌ 请输入有效的频道信息")
+                return
+            
+            # 验证频道访问权限
+            validated_channel_id = await self._validate_channel_access(channel_info)
+            if not validated_channel_id:
+                await message.reply_text("❌ 无法访问该频道，请检查频道链接或权限")
+                return
+            
+            # 获取频道信息
+            try:
+                chat = await self.client.get_chat(validated_channel_id)
+                channel_name = chat.title or f"目标{pair_index+1}"
+                channel_username = getattr(chat, 'username', '')
+                if channel_username:
+                    channel_username = f"@{channel_username}"
+                else:
+                    # 私密频道格式
+                    if validated_channel_id.startswith('-100'):
+                        channel_username = f"@c/{validated_channel_id[4:]}"
+                    else:
+                        channel_username = f"@c/{validated_channel_id}"
+            except Exception as e:
+                logger.warning(f"获取频道信息失败: {e}")
+                channel_name = f"目标{pair_index+1}"
+                channel_username = channel_info
+            
+            # 更新频道组
+            updates = {
+                'target_id': validated_channel_id,
+                'target_name': channel_name,
+                'target_username': channel_username,
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            success = await self.data_manager.update_channel_pair(user_id, pair_id, updates)
+            
+            if not success:
+                await message.reply_text("❌ 更新频道组失败，请稍后重试")
+                return
+            
+            # 清除用户状态
+            del self.user_states[user_id]
+            
+            # 显示成功消息
+            await message.reply_text(
+                f"✅ **目标频道更新成功！**\n\n"
+                f"📝 **频道组 {pair_index + 1}**\n"
+                f"📤 **新的目标频道：** {channel_name}\n"
+                f"🔗 **频道标识：** {channel_username}\n\n"
+                f"💡 您可以继续管理其他频道组。",
+                reply_markup=generate_button_layout([[
+                    ("⚙️ 频道管理", "show_channel_config_menu"),
+                    ("🔙 返回主菜单", "show_main_menu")
+                ]])
+            )
+            
+        except Exception as e:
+            logger.error(f"处理编辑目标频道输入失败: {e}")
+            await message.reply_text("❌ 处理失败，请稍后重试")
+            if user_id in self.user_states:
+                del self.user_states[user_id]
+
+    async def _handle_all_messages(self, message: Message):
+        """处理所有消息的统一入口"""
+        try:
+            # 处理私聊消息
+            if message.chat.type == 'private':
+                # 检查是否为命令
+                if message.text and message.text.startswith('/'):
+                    return  # 跳过命令，由命令处理器处理
+                await self._handle_text_message(message)
+                return
+            
+            # 处理群组/频道消息
+            if message.chat.type in ['group', 'supergroup', 'channel']:
+                await self._handle_group_message(message)
+                return
+                
+        except Exception as e:
+            logger.error(f"处理消息失败: {e}")
+    
+    async def _handle_group_message(self, message: Message):
+        """处理群组消息"""
+        try:
+            # 记录群组消息
+            logger.info(f"🔍 收到群组消息: chat_id={message.chat.id}, chat_type={message.chat.type}, service={message.service}")
+            
+            # 检查是否是服务消息（用户加入/离开等）
+            if message.service:
+                logger.info(f"🔍 服务消息类型: {message.service}")
+                
+                # 检查是否是机器人被添加的事件
+                if hasattr(message, 'new_chat_members') and message.new_chat_members:
+                    logger.info(f"🔍 新成员加入: {len(message.new_chat_members)} 个成员")
+                    for member in message.new_chat_members:
+                        logger.info(f"🔍 新成员: {member.id} (机器人ID: {self.client.me.id})")
+                        if member.id == self.client.me.id:
+                            # 机器人被添加到群组
+                            logger.info(f"✅ 检测到机器人被添加到群组: {message.chat.id}")
+                            await self._send_group_verification_message(message)
+                            break
+            
+        except Exception as e:
+            logger.error(f"处理群组消息失败: {e}")
+    
+    async def _handle_raw_update(self, update):
+        """处理原始更新 - 用于调试"""
+        try:
+            # 记录所有原始更新
+            update_type = type(update).__name__
+            logger.info(f"🔍 原始更新: {update_type}")
+            
+            # 检查是否是消息更新
+            if hasattr(update, 'message'):
+                message = update.message
+                if message:
+                    chat_id = getattr(message, 'chat_id', None)
+                    if chat_id:
+                        logger.info(f"🔍 原始消息更新: chat_id={chat_id}")
+                        
+                        # 检查是否是新成员加入
+                        if hasattr(message, 'new_chat_members') and message.new_chat_members:
+                            logger.info(f"🔍 原始更新 - 新成员: {len(message.new_chat_members)} 个")
+                            for member in message.new_chat_members:
+                                logger.info(f"🔍 原始更新 - 成员ID: {member}")
+            
+            # 检查是否是聊天成员更新
+            if hasattr(update, 'chat_member'):
+                chat_member = update.chat_member
+                if chat_member:
+                    logger.info(f"🔍 聊天成员更新: {chat_member}")
+            
+            # 处理频道参与者更新
+            if update_type == 'UpdateChannelParticipant':
+                await self._handle_channel_participant_update(update)
+                    
+        except Exception as e:
+            logger.error(f"处理原始更新失败: {e}")
+    
+    async def _handle_channel_participant_update(self, update):
+        """处理频道参与者更新"""
+        try:
+            logger.info(f"🔍 处理频道参与者更新: {update}")
+            
+            # 获取频道ID
+            channel_id = getattr(update, 'channel_id', None)
+            if not channel_id:
+                logger.warning("🔍 频道参与者更新没有频道ID")
+                return
+            
+            logger.info(f"🔍 频道ID: {channel_id}")
+            
+            # 获取参与者信息
+            participant = getattr(update, 'new_participant', None)
+            prev_participant = getattr(update, 'prev_participant', None)
+            
+            logger.info(f"🔍 新参与者: {participant}")
+            logger.info(f"🔍 前参与者: {prev_participant}")
+            
+            # 检查是否是机器人被添加
+            if participant:
+                # 检查参与者类型
+                participant_type = type(participant).__name__
+                logger.info(f"🔍 参与者类型: {participant_type}")
+                
+                # 检查是否是机器人
+                if hasattr(participant, 'user_id'):
+                    user_id = participant.user_id
+                    logger.info(f"🔍 参与者用户ID: {user_id}")
+                    
+                    # 检查是否是我们的机器人
+                    if user_id == self.bot_id:
+                        logger.info(f"✅ 检测到机器人被添加到频道: {channel_id}")
+                        await self._send_channel_verification_message(channel_id)
+                    else:
+                        logger.info(f"🔍 其他用户被添加: {user_id}")
+                elif hasattr(participant, 'bot_info'):
+                    bot_info = participant.bot_info
+                    logger.info(f"🔍 机器人信息: {bot_info}")
+                    
+                    # 检查是否是我们的机器人
+                    if hasattr(bot_info, 'user_id') and bot_info.user_id == self.bot_id:
+                        logger.info(f"✅ 检测到机器人被添加到频道: {channel_id}")
+                        await self._send_channel_verification_message(channel_id)
+            
+        except Exception as e:
+            logger.error(f"处理频道参与者更新失败: {e}")
+    
+    async def _send_channel_verification_message(self, channel_id):
+        """发送频道验证消息"""
+        try:
+            logger.info(f"📤 发送频道验证消息: {channel_id}")
+            
+            # 构建验证消息
+            verification_text = f"""
+🤖 **机器人验证消息**
+
+✅ **成功加入频道**
+🆔 **频道ID**: {channel_id}
+⏰ **加入时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+💡 **说明**: 此消息将在2秒后自动删除，用于验证机器人是否成功加入频道。
+
+🔧 **功能**: 机器人已准备就绪，可以开始频道搬运任务。
+""".strip()
+
+            # 发送验证消息
+            sent_message = await self.client.send_message(
+                chat_id=channel_id,
+                text=verification_text,
+                parse_mode="Markdown"
+            )
+
+            logger.info(f"✅ 频道验证消息已发送: {channel_id}")
+
+            # 2秒后删除消息
+            logger.info(f"⏰ 等待2秒后删除验证消息...")
+            await asyncio.sleep(2)
+
+            try:
+                logger.info(f"🗑️ 尝试删除验证消息: {sent_message.id}")
+                await sent_message.delete()
+                logger.info(f"✅ 频道验证消息已自动删除: {channel_id}")
+            except Exception as delete_error:
+                logger.warning(f"⚠️ 删除验证消息失败: {delete_error}")
+                logger.warning(f"⚠️ 删除失败详情: 消息ID={sent_message.id}, 频道ID={channel_id}")
+                
+                # 如果删除失败，尝试编辑消息为简短提示
+                try:
+                    logger.info(f"📝 尝试编辑消息为简短提示...")
+                    await sent_message.edit_text("✅ 机器人验证成功")
+                    logger.info(f"✅ 消息已编辑为简短提示")
+                except Exception as edit_error:
+                    logger.warning(f"⚠️ 编辑验证消息失败: {edit_error}")
+                    logger.warning(f"⚠️ 编辑失败详情: 消息ID={sent_message.id}, 频道ID={channel_id}")
+
+        except Exception as e:
+            logger.error(f"发送频道验证消息失败: {e}")
+    
+    async def _send_group_verification_message(self, message: Message):
+        """发送群组验证消息"""
+        try:
+            chat_id = message.chat.id
+            chat_title = message.chat.title or "未知群组"
+            chat_type = str(message.chat.type)
+            
+            # 构建验证消息
+            verification_text = f"""
+🤖 **机器人验证消息**
+
+✅ **成功加入群组**
+📝 **群组名称**: {chat_title}
+🆔 **群组ID**: {chat_id}
+📋 **群组类型**: {chat_type}
+⏰ **加入时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+💡 **说明**: 此消息将在2秒后自动删除，用于验证机器人是否成功加入群组。
+
+🔧 **功能**: 机器人已准备就绪，可以开始频道搬运任务。
+            """.strip()
+            
+            # 发送验证消息
+            sent_message = await self.client.send_message(
+                chat_id=chat_id,
+                text=verification_text,
+                parse_mode="Markdown"
+            )
+            
+            logger.info(f"✅ 群组验证消息已发送: {chat_title} ({chat_id})")
+            
+            # 2秒后删除消息
+            logger.info(f"⏰ 等待2秒后删除验证消息...")
+            await asyncio.sleep(2)
+            
+            try:
+                logger.info(f"🗑️ 尝试删除验证消息: {sent_message.id}")
+                await sent_message.delete()
+                logger.info(f"✅ 群组验证消息已自动删除: {chat_title} ({chat_id})")
+            except Exception as delete_error:
+                logger.warning(f"⚠️ 删除验证消息失败: {delete_error}")
+                logger.warning(f"⚠️ 删除失败详情: 消息ID={sent_message.id}, 聊天ID={chat_id}")
+                
+                # 如果删除失败，尝试编辑消息为简短提示
+                try:
+                    logger.info(f"📝 尝试编辑消息为简短提示...")
+                    await sent_message.edit_text("✅ 机器人验证成功")
+                    logger.info(f"✅ 消息已编辑为简短提示")
+                except Exception as edit_error:
+                    logger.warning(f"⚠️ 编辑验证消息失败: {edit_error}")
+                    logger.warning(f"⚠️ 编辑失败详情: 消息ID={sent_message.id}, 聊天ID={chat_id}")
+            
+        except Exception as e:
+            logger.error(f"发送群组验证消息失败: {e}")
 
 # ==================== 主函数 ====================
 async def main():

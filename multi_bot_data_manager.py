@@ -1,27 +1,30 @@
-# ==================== 数据管理器 ====================
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-数据管理器
-负责Firebase连接、用户配置存储、频道组管理和任务历史记录
+多机器人数据管理器
+支持按机器人ID分离数据存储
 """
 
-import json
 import logging
-import asyncio
-from typing import Dict, List, Any, Optional, Union
-from datetime import datetime, timedelta
-import firebase_admin
-from firebase_admin import credentials, firestore, auth
-from config import FIREBASE_CREDENTIALS, FIREBASE_PROJECT_ID, DEFAULT_USER_CONFIG
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 
-# 配置日志 - 显示详细状态信息
-logging.basicConfig(level=logging.INFO)
+import firebase_admin
+from firebase_admin import credentials, firestore
+from config import DEFAULT_USER_CONFIG
+
 logger = logging.getLogger(__name__)
 
-class DataManager:
-    """数据管理器类"""
+class MultiBotDataManager:
+    """多机器人数据管理器类"""
     
-    def __init__(self):
-        """初始化数据管理器"""
+    def __init__(self, bot_id: str):
+        """初始化数据管理器
+        
+        Args:
+            bot_id: 机器人ID，用于数据分离
+        """
+        self.bot_id = bot_id
         self.db = None
         self.initialized = False
         self._init_firebase()
@@ -50,44 +53,30 @@ class DataManager:
             # 获取Firestore数据库实例
             self.db = firestore.client()
             self.initialized = True
-            logger.info("✅ Firebase连接初始化成功")
+            logger.info(f"✅ Firebase连接初始化成功 (Bot: {self.bot_id})")
             
         except Exception as e:
             logger.error(f"❌ Firebase连接初始化失败: {e}")
             self._diagnose_firebase_error(e)
             self.initialized = False
     
-    def _validate_firebase_credentials(self, credentials_dict: Dict[str, Any]) -> bool:
-        """验证Firebase凭据格式"""
-        if not isinstance(credentials_dict, dict):
-            logger.error("❌ Firebase凭据必须是字典格式")
-            return False
-        
+    def _validate_firebase_credentials(self, credentials: Dict[str, Any]) -> bool:
+        """验证Firebase凭据"""
         required_fields = [
             'type', 'project_id', 'private_key_id', 'private_key',
             'client_email', 'client_id', 'auth_uri', 'token_uri'
         ]
         
         for field in required_fields:
-            if field not in credentials_dict:
+            if field not in credentials or not credentials[field]:
                 logger.error(f"❌ Firebase凭据缺少必需字段: {field}")
                 return False
             
-            if not credentials_dict[field] or credentials_dict[field].startswith('your_'):
-                logger.error(f"❌ Firebase凭据字段 {field} 未配置或使用占位符值")
+            # 检查是否为占位符值
+            if str(credentials[field]).startswith('your_'):
+                logger.error(f"❌ Firebase凭据字段 {field} 仍为占位符值")
                 return False
         
-        # 验证private_key格式
-        private_key = credentials_dict.get('private_key', '')
-        if not private_key.startswith('-----BEGIN PRIVATE KEY-----'):
-            logger.error("❌ private_key格式错误：必须以 '-----BEGIN PRIVATE KEY-----' 开头")
-            return False
-        
-        if not private_key.endswith('-----END PRIVATE KEY-----\n'):
-            logger.error("❌ private_key格式错误：必须以 '-----END PRIVATE KEY-----\\n' 结尾")
-            return False
-        
-        logger.info("✅ Firebase凭据格式验证通过")
         return True
     
     def _diagnose_firebase_error(self, error: Exception):
@@ -118,13 +107,20 @@ class DataManager:
             logger.error(f"🔧 其他Firebase错误: {error}")
             logger.error("   请检查网络连接和Firebase服务状态")
     
+    def _get_user_doc_ref(self, user_id: str):
+        """获取用户文档引用
+        
+        数据结构: bots/{bot_id}/users/{user_id}
+        """
+        return self.db.collection('bots').document(self.bot_id).collection('users').document(str(user_id))
+    
     async def get_user_config(self, user_id: str) -> Dict[str, Any]:
         """获取用户配置"""
         if not self.initialized:
             return DEFAULT_USER_CONFIG.copy()
         
         try:
-            doc_ref = self.db.collection('users').document(str(user_id))
+            doc_ref = self._get_user_doc_ref(user_id)
             doc = doc_ref.get()
             
             if doc.exists:
@@ -149,7 +145,7 @@ class DataManager:
             return False
         
         try:
-            doc_ref = self.db.collection('users').document(str(user_id))
+            doc_ref = self._get_user_doc_ref(user_id)
             
             # 获取现有配置
             existing_doc = doc_ref.get()
@@ -163,10 +159,12 @@ class DataManager:
                 # 新用户，直接设置
                 doc_ref.set({
                     'config': config,
+                    'bot_id': self.bot_id,
+                    'created_at': datetime.now().isoformat(),
                     'updated_at': datetime.now().isoformat()
                 })
             
-            logger.info(f"用户配置保存成功: {user_id}")
+            logger.info(f"用户配置保存成功: {user_id} (Bot: {self.bot_id})")
             return True
             
         except Exception as e:
@@ -183,7 +181,7 @@ class DataManager:
             return []
         
         try:
-            doc_ref = self.db.collection('users').document(str(user_id))
+            doc_ref = self._get_user_doc_ref(user_id)
             doc = doc_ref.get()
             
             if doc.exists:
@@ -202,12 +200,13 @@ class DataManager:
             return False
         
         try:
-            doc_ref = self.db.collection('users').document(str(user_id))
+            doc_ref = self._get_user_doc_ref(user_id)
             doc_ref.set({
                 'channel_pairs': channel_pairs,
+                'bot_id': self.bot_id,
                 'updated_at': datetime.now().isoformat()
             }, merge=True)
-            logger.info(f"频道组列表保存成功: {user_id}")
+            logger.info(f"频道组列表保存成功: {user_id} (Bot: {self.bot_id})")
             return True
             
         except Exception as e:
@@ -237,6 +236,7 @@ class DataManager:
                 'source_name': source_name or f"频道{len(channel_pairs)+1}",
                 'target_name': target_name or f"目标{len(channel_pairs)+1}",
                 'enabled': True,
+                'bot_id': self.bot_id,
                 'is_private_source': self._detect_private_channel(source_username, source_id),
                 'is_private_target': self._detect_private_channel(target_username, target_id),
                 'created_at': datetime.now().isoformat(),
@@ -319,57 +319,6 @@ class DataManager:
             logger.error(f"删除频道组失败: {e}")
             return False
     
-    async def get_task_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """获取任务历史记录"""
-        if not self.initialized:
-            return []
-        
-        try:
-            doc_ref = self.db.collection('users').document(str(user_id))
-            doc = doc_ref.get()
-            
-            if doc.exists:
-                user_data = doc.to_dict()
-                history = user_data.get('task_history', [])
-                # 按时间倒序排列，限制数量
-                history.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-                return history[:limit]
-            else:
-                return []
-                
-        except Exception as e:
-            logger.error(f"获取任务历史失败 {user_id}: {e}")
-            return []
-    
-    async def add_task_record(self, user_id: str, task_data: Dict[str, Any]) -> bool:
-        """添加任务记录"""
-        try:
-            history = await self.get_task_history(user_id, limit=1000)
-            
-            # 添加新任务记录
-            task_record = {
-                'id': f"task_{int(datetime.now().timestamp())}",
-                'created_at': datetime.now().isoformat(),
-                'status': 'completed',
-                **task_data
-            }
-            
-            history.insert(0, task_record)
-            
-            # 保存到数据库
-            doc_ref = self.db.collection('users').document(str(user_id))
-            doc_ref.set({
-                'task_history': history,
-                'updated_at': datetime.now().isoformat()
-            }, merge=True)
-            
-            logger.info(f"任务记录添加成功: {user_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"删除频道组失败: {e}")
-            return False
-
     async def _delete_channel_filter_config(self, user_id: str, pair_id: str):
         """删除指定频道组的过滤配置"""
         try:
@@ -389,47 +338,64 @@ class DataManager:
             
         except Exception as e:
             logger.error(f"删除频道过滤配置失败: {e}")
-
-    async def _cleanup_channel_filter_config(self, user_id: str, deleted_index: int):
-        """清理指定索引的频道过滤配置（已废弃，保留用于兼容性）"""
-        logger.warning("_cleanup_channel_filter_config方法已废弃，请使用_delete_channel_filter_config")
-        pass
-
+    
     async def clear_all_channel_filter_configs(self, user_id: str):
-        """清理所有频道过滤配置"""
+        """清空所有频道过滤配置"""
         try:
             user_config = await self.get_user_config(user_id)
             user_config['channel_filters'] = {}
             await self.save_user_config(user_id, user_config)
-            logger.info(f"已清理用户 {user_id} 的所有频道过滤配置")
+            logger.info(f"清空所有频道过滤配置成功: {user_id}")
         except Exception as e:
-            logger.error(f"清理所有频道过滤配置失败: {e}")
-
-    async def get_monitor_settings(self, user_id: str) -> Dict[str, Any]:
-        """获取监听设置"""
-        try:
-            config = await self.get_user_config(user_id)
-            return {
-                'monitor_enabled': config.get('monitor_enabled', False),
-                'monitored_pairs': config.get('monitored_pairs', [])
-            }
-        except Exception as e:
-            logger.error(f"获取监听设置失败: {e}")
-            return {'monitor_enabled': False, 'monitored_pairs': []}
+            logger.error(f"清空所有频道过滤配置失败: {e}")
     
-    async def update_monitor_settings(self, user_id: str, 
-                                    monitor_enabled: bool, 
-                                    monitored_pairs: List[Dict[str, Any]]) -> bool:
-        """更新监听设置"""
+    async def get_all_users(self) -> List[str]:
+        """获取当前机器人的所有用户ID"""
+        if not self.initialized:
+            return []
+        
         try:
-            config = await self.get_user_config(user_id)
-            config['monitor_enabled'] = monitor_enabled
-            config['monitored_pairs'] = monitored_pairs
+            users_ref = self.db.collection('bots').document(self.bot_id).collection('users')
+            docs = users_ref.stream()
+            return [doc.id for doc in docs]
+        except Exception as e:
+            logger.error(f"获取用户列表失败: {e}")
+            return []
+    
+    async def migrate_from_old_structure(self, old_data_manager) -> bool:
+        """从旧的数据结构迁移数据
+        
+        Args:
+            old_data_manager: 旧的DataManager实例
+        """
+        try:
+            logger.info(f"开始迁移数据到新结构 (Bot: {self.bot_id})")
             
-            return await self.save_user_config(user_id, config)
+            # 获取旧结构中的所有用户
+            old_users_ref = old_data_manager.db.collection('users')
+            old_docs = old_users_ref.stream()
+            
+            migrated_count = 0
+            for doc in old_docs:
+                user_id = doc.id
+                user_data = doc.to_dict()
+                
+                # 迁移用户配置
+                if 'config' in user_data:
+                    await self.save_user_config(user_id, user_data['config'])
+                
+                # 迁移频道组
+                if 'channel_pairs' in user_data:
+                    await self.save_channel_pairs(user_id, user_data['channel_pairs'])
+                
+                migrated_count += 1
+                logger.info(f"已迁移用户: {user_id}")
+            
+            logger.info(f"数据迁移完成，共迁移 {migrated_count} 个用户")
+            return True
             
         except Exception as e:
-            logger.error(f"更新监听设置失败: {e}")
+            logger.error(f"数据迁移失败: {e}")
             return False
     
     async def health_check(self) -> Dict[str, Any]:
@@ -439,15 +405,17 @@ class DataManager:
                 return {
                     'status': 'error',
                     'message': 'Firebase未初始化',
+                    'bot_id': self.bot_id,
                     'timestamp': datetime.now().isoformat()
                 }
             
             # 测试数据库连接
-            self.db.collection('health').document('test').get()
+            self.db.collection('bots').document(self.bot_id).collection('health').document('test').get()
             
             return {
                 'status': 'healthy',
                 'message': '数据库连接正常',
+                'bot_id': self.bot_id,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -455,42 +423,17 @@ class DataManager:
             return {
                 'status': 'error',
                 'message': f'数据库连接异常: {str(e)}',
+                'bot_id': self.bot_id,
                 'timestamp': datetime.now().isoformat()
             }
 
-# 全局数据管理器实例
-data_manager = DataManager()
-
 # ==================== 导出函数 ====================
-async def get_user_config(user_id: str) -> Dict[str, Any]:
-    """获取用户配置"""
-    return await data_manager.get_user_config(user_id)
 
-async def save_user_config(user_id: str, config: Dict[str, Any]) -> bool:
-    """保存用户配置"""
-    return await data_manager.save_user_config(user_id, config)
-
-async def get_channel_pairs(user_id: str) -> List[Dict[str, Any]]:
-    """获取频道组列表"""
-    return await data_manager.get_channel_pairs(user_id)
-
-async def add_channel_pair(user_id: str, source_username: str, target_username: str, 
-                          source_name: str = "", target_name: str = "",
-                          source_id: str = "", target_id: str = "") -> bool:
-    """添加频道组（主要存储用户名）"""
-    return await data_manager.add_channel_pair(user_id, source_username, target_username, source_name, target_name, source_id, target_id)
-
-async def health_check() -> Dict[str, Any]:
-    """健康检查"""
-    return await data_manager.health_check()
+def create_multi_bot_data_manager(bot_id: str) -> MultiBotDataManager:
+    """创建多机器人数据管理器实例"""
+    return MultiBotDataManager(bot_id)
 
 __all__ = [
-    "DataManager", "data_manager",
-    "get_user_config", "save_user_config",
-    "get_channel_pairs", "add_channel_pair",
-    "health_check"
+    "MultiBotDataManager",
+    "create_multi_bot_data_manager"
 ]
-
-
-
-

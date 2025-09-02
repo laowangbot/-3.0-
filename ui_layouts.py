@@ -222,7 +222,16 @@ def generate_channel_list_buttons(channel_pairs: List[Dict[str, Any]], user_id: 
         enabled = pair.get('enabled', True)
         status_icon = "✅" if enabled else "❌"
         
-        button_text = f"{status_icon} {source_name} → {target_name}"
+        # 检查是否为私密频道
+        is_private_source = pair.get('is_private_source', False)
+        is_private_target = pair.get('is_private_target', False)
+        
+        # 添加私密频道标识
+        private_icon = ""
+        if is_private_source or is_private_target:
+            private_icon = " 🔒"
+        
+        button_text = f"{status_icon} {source_name} → {target_name}{private_icon}"
         buttons.append([
             InlineKeyboardButton(button_text, callback_data=f"edit_channel_pair:{i}"),
             InlineKeyboardButton(f"🗑️", callback_data=f"delete_channel_pair:{i}")
