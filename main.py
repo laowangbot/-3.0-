@@ -75,6 +75,38 @@ class TelegramBot:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
+    async def _should_cleanup_session(self, session_name):
+        """检查是否需要清理session文件"""
+        try:
+            import os
+            
+            session_file = f"{session_name}.session"
+            
+            # 如果session文件不存在，不需要清理
+            if not os.path.exists(session_file):
+                logger.info(f"📁 session文件不存在: {session_file}")
+                return False
+            
+            # 检查session文件大小，如果太小可能是损坏的
+            file_size = os.path.getsize(session_file)
+            if file_size < 100:  # 小于100字节可能是损坏的
+                logger.warning(f"⚠️ session文件可能损坏 (大小: {file_size} 字节): {session_file}")
+                return True
+            
+            # 尝试读取session文件，如果读取失败说明损坏
+            try:
+                with open(session_file, 'rb') as f:
+                    f.read(1)  # 尝试读取一个字节
+                logger.info(f"✅ session文件正常: {session_file}")
+                return False
+            except Exception as e:
+                logger.warning(f"⚠️ session文件读取失败: {e}")
+                return True
+                
+        except Exception as e:
+            logger.warning(f"检查session文件失败: {e}")
+            return False
+    
     async def _cleanup_session_files(self, session_name):
         """清理可能损坏的session文件"""
         try:
@@ -130,15 +162,12 @@ class TelegramBot:
             # 在Render环境中使用不同的session文件名
             session_name = "render_bot_session" if self.config.get('is_render') else "bot_session"
             
-            # 清理可能损坏的session文件
-            await self._cleanup_session_files(session_name)
-            
-            # 在Render环境中，添加时间戳确保session文件唯一性
-            if self.config.get('is_render'):
-                import time
-                timestamp = int(time.time())
-                session_name = f"render_bot_session_{timestamp}"
-                logger.info(f"🆕 使用带时间戳的session文件名: {session_name}")
+            # 只在session文件损坏时才清理，而不是每次启动都清理
+            if await self._should_cleanup_session(session_name):
+                logger.info("🔧 检测到session文件损坏，进行清理...")
+                await self._cleanup_session_files(session_name)
+            else:
+                logger.info("✅ session文件正常，保持现有授权状态")
             
             self.client = Client(
                 session_name,
