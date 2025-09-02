@@ -79,10 +79,29 @@ class TelegramBot:
         """清理可能损坏的session文件"""
         try:
             import os
-            session_file = f"{session_name}.session"
-            if os.path.exists(session_file):
-                logger.info(f"🗑️ 清理旧的session文件: {session_file}")
-                os.remove(session_file)
+            import glob
+            
+            # 清理所有可能的session文件
+            session_patterns = [
+                f"{session_name}.session",
+                f"{session_name}.session-journal",
+                "bot_session.session",
+                "bot_session.session-journal",
+                "render_bot_session.session",
+                "render_bot_session.session-journal"
+            ]
+            
+            for pattern in session_patterns:
+                if os.path.exists(pattern):
+                    logger.info(f"🗑️ 清理旧的session文件: {pattern}")
+                    os.remove(pattern)
+                    
+            # 也清理所有.session文件（在Render环境中）
+            if self.config.get('is_render'):
+                for session_file in glob.glob("*.session*"):
+                    logger.info(f"🗑️ 清理所有session文件: {session_file}")
+                    os.remove(session_file)
+                    
         except Exception as e:
             logger.warning(f"清理session文件失败: {e}")
     
@@ -113,6 +132,13 @@ class TelegramBot:
             
             # 清理可能损坏的session文件
             await self._cleanup_session_files(session_name)
+            
+            # 在Render环境中，添加时间戳确保session文件唯一性
+            if self.config.get('is_render'):
+                import time
+                timestamp = int(time.time())
+                session_name = f"render_bot_session_{timestamp}"
+                logger.info(f"🆕 使用带时间戳的session文件名: {session_name}")
             
             self.client = Client(
                 session_name,
