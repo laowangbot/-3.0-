@@ -5278,15 +5278,37 @@ class TelegramBot:
         """处理选择附加文字频率"""
         try:
             user_id = str(callback_query.from_user.id)
-            pair_index = int(callback_query.data.split(':')[1])
+            data_part = callback_query.data.split(':')[1]
             
-            # 获取频道组信息
-            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-            if pair_index >= len(channel_pairs):
-                await callback_query.edit_message_text("❌ 频道组不存在")
-                return
+            # 判断是pair_id格式还是pair_index格式
+            if data_part.startswith('pair_'):
+                # pair_id格式
+                pair_id = data_part
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                
+                # 查找对应的频道组
+                pair = None
+                pair_index = None
+                for i, p in enumerate(channel_pairs):
+                    if p.get('id') == pair_id:
+                        pair = p
+                        pair_index = i
+                        break
+                
+                if not pair:
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+            else:
+                # pair_index格式（向后兼容）
+                pair_index = int(data_part)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                if pair_index >= len(channel_pairs):
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+                
+                pair = channel_pairs[pair_index]
+                pair_id = pair.get('id', f'pair_{pair_index}')
             
-            pair = channel_pairs[pair_index]
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
@@ -5313,12 +5335,12 @@ class TelegramBot:
             
             # 生成频率选择按钮
             buttons = [
-                [("100% 每条都添加", f"set_tail_frequency:{pair_index}:100")],
-                [("75% 大部分添加", f"set_tail_frequency:{pair_index}:75")],
-                [("50% 一半添加", f"set_tail_frequency:{pair_index}:50")],
-                [("25% 少量添加", f"set_tail_frequency:{pair_index}:25")],
-                [("10% 偶尔添加", f"set_tail_frequency:{pair_index}:10")],
-                [("🔙 返回小尾巴设置", f"channel_tail_text:{pair_index}")]
+                [("100% 每条都添加", f"set_tail_frequency:{pair_id}:100")],
+                [("75% 大部分添加", f"set_tail_frequency:{pair_id}:75")],
+                [("50% 一半添加", f"set_tail_frequency:{pair_id}:50")],
+                [("25% 少量添加", f"set_tail_frequency:{pair_id}:25")],
+                [("10% 偶尔添加", f"set_tail_frequency:{pair_id}:10")],
+                [("🔙 返回小尾巴设置", f"channel_tail_text:{pair_id}")]
             ]
             
             await callback_query.edit_message_text(
@@ -5334,15 +5356,37 @@ class TelegramBot:
         """处理选择附加按钮频率"""
         try:
             user_id = str(callback_query.from_user.id)
-            pair_index = int(callback_query.data.split(':')[1])
+            data_part = callback_query.data.split(':')[1]
             
-            # 获取频道组信息
-            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-            if pair_index >= len(channel_pairs):
-                await callback_query.edit_message_text("❌ 频道组不存在")
-                return
+            # 判断是pair_id格式还是pair_index格式
+            if data_part.startswith('pair_'):
+                # pair_id格式
+                pair_id = data_part
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                
+                # 查找对应的频道组
+                pair = None
+                pair_index = None
+                for i, p in enumerate(channel_pairs):
+                    if p.get('id') == pair_id:
+                        pair = p
+                        pair_index = i
+                        break
+                
+                if not pair:
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+            else:
+                # pair_index格式（向后兼容）
+                pair_index = int(data_part)
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                if pair_index >= len(channel_pairs):
+                    await callback_query.edit_message_text("❌ 频道组不存在")
+                    return
+                
+                pair = channel_pairs[pair_index]
+                pair_id = pair.get('id', f'pair_{pair_index}')
             
-            pair = channel_pairs[pair_index]
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             target_name = pair.get('target_name', f'目标{pair_index+1}')
             
@@ -5369,12 +5413,12 @@ class TelegramBot:
             
             # 生成频率选择按钮
             buttons = [
-                [("100% 每条都添加", f"set_button_frequency:{pair_index}:100")],
-                [("75% 大部分添加", f"set_button_frequency:{pair_index}:75")],
-                [("50% 一半添加", f"set_button_frequency:{pair_index}:50")],
-                [("25% 少量添加", f"set_button_frequency:{pair_index}:25")],
-                [("10% 偶尔添加", f"set_button_frequency:{pair_index}:10")],
-                [("🔙 返回按钮设置", f"channel_buttons:{pair_index}")]
+                [("100% 每条都添加", f"set_button_frequency:{pair_id}:100")],
+                [("75% 大部分添加", f"set_button_frequency:{pair_id}:75")],
+                [("50% 一半添加", f"set_button_frequency:{pair_id}:50")],
+                [("25% 少量添加", f"set_button_frequency:{pair_id}:25")],
+                [("10% 偶尔添加", f"set_button_frequency:{pair_id}:10")],
+                [("🔙 返回按钮设置", f"channel_buttons:{pair_id}")]
             ]
             
             await callback_query.edit_message_text(
@@ -5402,9 +5446,39 @@ class TelegramBot:
                     config_title = "🎯 **全局附加文字频率设置**\n\n"
                 else:
                     # 频道组特定设置
-                    pair_index = int(parts[1])
+                    data_part = parts[1]
                     frequency = parts[2]
-                    return_callback = f"channel_tail_text:{pair_index}"
+                    
+                    # 判断是pair_id格式还是pair_index格式
+                    if data_part.startswith('pair_'):
+                        # pair_id格式
+                        pair_id = data_part
+                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                        
+                        # 查找对应的频道组
+                        pair = None
+                        pair_index = None
+                        for i, p in enumerate(channel_pairs):
+                            if p.get('id') == pair_id:
+                                pair = p
+                                pair_index = i
+                                break
+                        
+                        if not pair:
+                            await callback_query.edit_message_text("❌ 频道组不存在")
+                            return
+                    else:
+                        # pair_index格式（向后兼容）
+                        pair_index = int(data_part)
+                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                        if pair_index >= len(channel_pairs):
+                            await callback_query.edit_message_text("❌ 频道组不存在")
+                            return
+                        
+                        pair = channel_pairs[pair_index]
+                        pair_id = pair.get('id', f'pair_{pair_index}')
+                    
+                    return_callback = f"channel_tail_text:{pair_id}"
                     config_title = f"🎯 **频道组 {pair_index + 1} 附加文字频率设置**\n\n"
             else:
                 await callback_query.edit_message_text("❌ 频率设置格式错误")
@@ -5415,7 +5489,20 @@ class TelegramBot:
                 freq_value = int(frequency)
                 if 1 <= freq_value <= 100:
                     user_config = await self.data_manager.get_user_config(user_id)
-                    user_config['tail_frequency'] = freq_value
+                    
+                    # 检查是否是频道组特定设置
+                    if 'pair_id' in locals():
+                        # 频道组特定设置
+                        if 'channel_filters' not in user_config:
+                            user_config['channel_filters'] = {}
+                        if pair_id not in user_config['channel_filters']:
+                            user_config['channel_filters'][pair_id] = {}
+                        
+                        user_config['channel_filters'][pair_id]['tail_frequency'] = freq_value
+                    else:
+                        # 全局设置
+                        user_config['tail_frequency'] = freq_value
+                    
                     await self.data_manager.save_user_config(user_id, user_config)
                     
                     message_text = f"""
@@ -5461,9 +5548,39 @@ class TelegramBot:
                     config_title = "🎯 **全局附加按钮频率设置**\n\n"
                 else:
                     # 频道组特定设置
-                    pair_index = int(parts[1])
+                    data_part = parts[1]
                     frequency = parts[2]
-                    return_callback = f"channel_buttons:{pair_index}"
+                    
+                    # 判断是pair_id格式还是pair_index格式
+                    if data_part.startswith('pair_'):
+                        # pair_id格式
+                        pair_id = data_part
+                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                        
+                        # 查找对应的频道组
+                        pair = None
+                        pair_index = None
+                        for i, p in enumerate(channel_pairs):
+                            if p.get('id') == pair_id:
+                                pair = p
+                                pair_index = i
+                                break
+                        
+                        if not pair:
+                            await callback_query.edit_message_text("❌ 频道组不存在")
+                            return
+                    else:
+                        # pair_index格式（向后兼容）
+                        pair_index = int(data_part)
+                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                        if pair_index >= len(channel_pairs):
+                            await callback_query.edit_message_text("❌ 频道组不存在")
+                            return
+                        
+                        pair = channel_pairs[pair_index]
+                        pair_id = pair.get('id', f'pair_{pair_index}')
+                    
+                    return_callback = f"channel_buttons:{pair_id}"
                     config_title = f"🎯 **频道组 {pair_index + 1} 附加按钮频率设置**\n\n"
             else:
                 await callback_query.edit_message_text("❌ 频率设置格式错误")
@@ -5474,7 +5591,20 @@ class TelegramBot:
                 freq_value = int(frequency)
                 if 1 <= freq_value <= 100:
                     user_config = await self.data_manager.get_user_config(user_id)
-                    user_config['button_frequency'] = freq_value
+                    
+                    # 检查是否是频道组特定设置
+                    if 'pair_id' in locals():
+                        # 频道组特定设置
+                        if 'channel_filters' not in user_config:
+                            user_config['channel_filters'] = {}
+                        if pair_id not in user_config['channel_filters']:
+                            user_config['channel_filters'][pair_id] = {}
+                        
+                        user_config['channel_filters'][pair_id]['button_frequency'] = freq_value
+                    else:
+                        # 全局设置
+                        user_config['button_frequency'] = freq_value
+                    
                     await self.data_manager.save_user_config(user_id, user_config)
                     
                     message_text = f"""
