@@ -476,7 +476,17 @@ class CloningEngine:
     
     async def _try_private_channel_access(self, channel_id: str):
         """尝试多种前缀格式访问私密频道"""
-        # 处理不同格式的私密频道ID
+        # 首先尝试直接访问原始ID
+        try:
+            logger.info(f"尝试直接访问频道: {channel_id}")
+            chat = await self.client.get_chat(channel_id)
+            if chat:
+                logger.info(f"频道直接访问成功: {channel_id} ({chat.type})")
+                return chat
+        except Exception as e:
+            logger.debug(f"频道直接访问失败: {e}")
+        
+        # 如果直接访问失败，尝试不同的格式
         channel_num = None
         
         if channel_id.startswith('@c/'):
@@ -486,10 +496,11 @@ class CloningEngine:
             # -1001234567890 格式，提取数字部分
             channel_num = channel_id[4:]  # 移除-100前缀
         elif channel_id.startswith('-'):
-            # 其他负数格式
-            return None
+            # 其他负数格式，提取数字部分
+            channel_num = channel_id[1:]
         else:
-            return None
+            # 纯数字格式
+            channel_num = channel_id
         
         if not channel_num or not channel_num.isdigit():
             logger.warning(f"私密频道ID格式错误: {channel_id}")
