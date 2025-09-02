@@ -109,10 +109,11 @@ class CloneTask:
 class CloningEngine:
     """搬运引擎类"""
     
-    def __init__(self, client: Client, config: Dict[str, Any]):
+    def __init__(self, client: Client, config: Dict[str, Any], data_manager=None):
         """初始化搬运引擎"""
         self.client = client
         self.config = config
+        self.data_manager = data_manager
         self.message_engine = MessageEngine(config)
         self.active_tasks: Dict[str, CloneTask] = {}
         self.task_history: List[Dict[str, Any]] = []
@@ -132,7 +133,10 @@ class CloningEngine:
         """获取频道组的有效配置（优先使用独立配置，否则使用全局配置）"""
         try:
             # 获取用户配置
-            user_config = await get_user_config(user_id)
+            if self.data_manager:
+                user_config = await self.data_manager.get_user_config(user_id)
+            else:
+                user_config = await get_user_config(user_id)
             
             # 检查是否有频道组独立过滤配置
             channel_filters = user_config.get('channel_filters', {}).get(pair_id, {})
@@ -1908,9 +1912,9 @@ class CloningEngine:
     # 所有评论处理相关函数已移除
 
 # ==================== 导出函数 ====================
-def create_cloning_engine(client: Client, config: Dict[str, Any]) -> CloningEngine:
+def create_cloning_engine(client: Client, config: Dict[str, Any], data_manager=None) -> CloningEngine:
     """创建搬运引擎实例"""
-    return CloningEngine(client, config)
+    return CloningEngine(client, config, data_manager)
 
 __all__ = [
     "CloneTask", "CloningEngine", "create_cloning_engine"

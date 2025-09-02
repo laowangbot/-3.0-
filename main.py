@@ -181,7 +181,7 @@ class TelegramBot:
             logger.info("✅ Telegram客户端启动成功")
             
             # 初始化搬运引擎
-            self.cloning_engine = create_cloning_engine(self.client, self.config)
+            self.cloning_engine = create_cloning_engine(self.client, self.config, self.data_manager)
             logger.info("✅ 搬运引擎初始化成功")
             
             # 设置进度回调函数
@@ -4310,7 +4310,19 @@ class TelegramBot:
                 user_config['channel_filters'][pair_id]['tail_frequency'] = user_config.get('tail_frequency', 'always')
                 user_config['channel_filters'][pair_id]['tail_position'] = user_config.get('tail_position', 'end')
                 
+                # 添加调试日志
+                logger.info(f"🔍 保存小尾巴配置:")
+                logger.info(f"  • pair_id: {pair_id}")
+                logger.info(f"  • tail_text: '{text}'")
+                logger.info(f"  • tail_frequency: {user_config.get('tail_frequency', 'always')}")
+                logger.info(f"  • tail_position: {user_config.get('tail_position', 'end')}")
+                logger.info(f"  • 保存前的channel_filters: {user_config.get('channel_filters', {}).get(pair_id, {})}")
+                
                 await self.data_manager.save_user_config(user_id, user_config)
+                
+                # 验证保存结果
+                saved_config = await self.data_manager.get_user_config(user_id)
+                logger.info(f"  • 保存后的channel_filters: {saved_config.get('channel_filters', {}).get(pair_id, {})}")
                 
                 await message.reply_text(
                     f"✅ 频道组 {pair_index + 1} 附加文字设置成功！\n\n**当前文字：** {text}\n\n现在该频道组的消息将自动添加这个文字。",

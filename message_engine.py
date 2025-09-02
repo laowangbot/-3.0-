@@ -688,19 +688,33 @@ class MessageEngine:
     def _should_add_tail_text(self, config: Dict[str, Any]) -> bool:
         """检查是否应该添加小尾巴文本（使用指定配置）"""
         tail_text = config.get('tail_text', '').strip()
+        
+        # 添加详细的调试信息
+        logger.info(f"🔍 _should_add_tail_text 详细检查:")
+        logger.info(f"  • tail_text: '{tail_text}'")
+        logger.info(f"  • tail_text长度: {len(tail_text)}")
+        logger.info(f"  • tail_text是否为空: {not tail_text}")
+        logger.info(f"  • 完整config: {config}")
+        
         if not tail_text:
+            logger.info(f"  • 结果: False (tail_text为空)")
             return False
         
         # 检查频率设置（支持数字百分比）
         frequency = config.get('tail_frequency', 100)
+        logger.info(f"  • frequency: {frequency} (类型: {type(frequency)})")
         
         # 如果是数字，按百分比处理
         if isinstance(frequency, (int, float)):
             # 确保频率值在有效范围内
             frequency = float(frequency)
+            logger.info(f"  • 数字频率处理: {frequency}")
+            
             if frequency >= 100.0:
+                logger.info(f"  • 结果: True (频率 >= 100%)")
                 return True
             elif frequency <= 0.0:
+                logger.info(f"  • 结果: False (频率 <= 0%)")
                 return False
             else:
                 # 按百分比概率添加
@@ -708,21 +722,27 @@ class MessageEngine:
                 # 使用更精确的随机数生成
                 random_value = random.random()
                 should_add = random_value < (frequency / 100.0)
-                logger.debug(f"🔍 小尾巴频率检查: frequency={frequency}%, random_value={random_value:.3f}, should_add={should_add}")
+                logger.info(f"🔍 小尾巴频率检查: frequency={frequency}%, random_value={random_value:.3f}, should_add={should_add}")
                 return should_add
         
         # 兼容旧的文本模式
         if frequency == 'always':
+            logger.info(f"  • 结果: True (频率 = 'always')")
             return True
         elif frequency == 'interval':
             # 间隔添加，每N条消息添加一次
             interval = config.get('tail_interval', 5)
-            return self.message_counter % interval == 0
+            should_add = self.message_counter % interval == 0
+            logger.info(f"  • 间隔模式: interval={interval}, message_counter={self.message_counter}, should_add={should_add}")
+            return should_add
         elif frequency == 'random':
             # 随机添加，50%概率
             import random
-            return random.random() < 0.5
+            should_add = random.random() < 0.5
+            logger.info(f"  • 随机模式: should_add={should_add}")
+            return should_add
         
+        logger.info(f"  • 结果: False (未知频率模式: {frequency})")
         return False
     
     def _add_tail_text(self, text: str, config: Dict[str, Any]) -> str:

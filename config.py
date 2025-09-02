@@ -112,7 +112,6 @@ def get_config() -> Dict[str, Any]:
     is_render = (
         os.getenv("RENDER") is not None or  # Render官方环境变量
         os.getenv("RENDER_EXTERNAL_URL") is not None or  # 我们的自定义环境变量
-        os.getenv("PORT") == "8080" or  # Render默认端口
         "render.com" in os.getenv("HOST", "")  # Render域名检测
     )
     
