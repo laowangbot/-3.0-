@@ -10557,43 +10557,27 @@ class TelegramBot:
     async def _handle_channel_participant_update(self, update):
         """处理频道参与者更新"""
         try:
-            logger.info(f"🔍 处理频道参与者更新: {update}")
-            
             # 获取频道ID
             channel_id = getattr(update, 'channel_id', None)
             if not channel_id:
-                logger.warning("🔍 频道参与者更新没有频道ID")
                 return
-            
-            logger.info(f"🔍 频道ID: {channel_id}")
             
             # 获取参与者信息
             participant = getattr(update, 'new_participant', None)
             prev_participant = getattr(update, 'prev_participant', None)
             
-            logger.info(f"🔍 新参与者: {participant}")
-            logger.info(f"🔍 前参与者: {prev_participant}")
-            
             # 检查是否是机器人被添加
-            if participant:
-                # 检查参与者类型
-                participant_type = type(participant).__name__
-                logger.info(f"🔍 参与者类型: {participant_type}")
-                
+            if participant and not prev_participant:
                 # 检查是否是机器人
                 if hasattr(participant, 'user_id'):
                     user_id = participant.user_id
-                    logger.info(f"🔍 参与者用户ID: {user_id}")
                     
                     # 检查是否是我们的机器人
                     if user_id == self.bot_id:
                         logger.info(f"✅ 检测到机器人被添加到频道: {channel_id}")
                         await self._send_channel_verification_message(channel_id)
-                    else:
-                        logger.info(f"🔍 其他用户被添加: {user_id}")
                 elif hasattr(participant, 'bot_info'):
                     bot_info = participant.bot_info
-                    logger.info(f"🔍 机器人信息: {bot_info}")
                     
                     # 检查是否是我们的机器人
                     if hasattr(bot_info, 'user_id') and bot_info.user_id == self.bot_id:

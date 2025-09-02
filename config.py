@@ -116,21 +116,10 @@ def get_config() -> Dict[str, Any]:
         "render.com" in os.getenv("HOST", "")  # Render域名检测
     )
     
-    # 添加调试信息
-    print(f"🔍 环境检测:")
-    print(f"   RENDER: {os.getenv('RENDER')}")
-    print(f"   RENDER_EXTERNAL_URL: {os.getenv('RENDER_EXTERNAL_URL')}")
-    print(f"   PORT: {os.getenv('PORT')}")
-    print(f"   HOST: {os.getenv('HOST')}")
-    print(f"   判断为Render环境: {is_render}")
-    
     # 只在非Render环境加载.env文件
     if not is_render:
         from dotenv import load_dotenv
         load_dotenv()
-        print("📁 加载了.env文件")
-    else:
-        print("☁️ 检测到Render环境，跳过.env文件加载")
     
     # 处理Firebase凭据
     firebase_credentials = FIREBASE_CREDENTIALS
@@ -155,13 +144,7 @@ def get_config() -> Dict[str, Any]:
     api_hash = os.getenv("API_HASH", API_HASH)
     bot_token = os.getenv("BOT_TOKEN", BOT_TOKEN)
     
-    # 添加配置值调试信息
-    print(f"🔧 配置值:")
-    print(f"   BOT_ID: 环境变量={os.getenv('BOT_ID')}, 默认值={BOT_ID}, 最终值={bot_id}")
-    print(f"   BOT_NAME: 环境变量={os.getenv('BOT_NAME')}, 默认值={BOT_NAME}, 最终值={bot_name}")
-    print(f"   API_ID: 环境变量={os.getenv('API_ID')}, 默认值={API_ID}, 最终值={api_id_str}")
-    print(f"   API_HASH: 环境变量={os.getenv('API_HASH', '')[:8]}..., 默认值={API_HASH[:8]}..., 最终值={api_hash[:8]}...")
-    print(f"   BOT_TOKEN: 环境变量={os.getenv('BOT_TOKEN', '')[:8]}..., 默认值={BOT_TOKEN[:8]}..., 最终值={bot_token[:8]}...")
+
     
     # 处理API_ID
     if api_id_str and api_id_str != "your_api_id":
