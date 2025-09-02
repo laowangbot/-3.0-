@@ -4210,34 +4210,27 @@ class TelegramBot:
             
             if text == "清空":
                 # 检查是否是频道组特定设置
+                pair_id = state.get('data', {}).get('pair_id')
                 pair_index = state.get('data', {}).get('pair_index')
                 
-                if pair_index is not None:
+                if pair_id is not None:
                     # 频道组特定设置
                     user_config = await self.data_manager.get_user_config(user_id)
-                    
-                    # 获取频道组信息
-                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-                    if pair_index >= len(channel_pairs):
-                        await message.reply_text("❌ 频道组不存在")
-                        return
-                    
-                    pair = channel_pairs[pair_index]
                     
                     # 确保channel_filters存在
                     if 'channel_filters' not in user_config:
                         user_config['channel_filters'] = {}
-                    if pair['id'] not in user_config['channel_filters']:
-                        user_config['channel_filters'][pair['id']] = {}
+                    if pair_id not in user_config['channel_filters']:
+                        user_config['channel_filters'][pair_id] = {}
                     
                     # 清空频道组特定配置
-                    user_config['channel_filters'][pair['id']]['tail_text'] = ''
+                    user_config['channel_filters'][pair_id]['tail_text'] = ''
                     await self.data_manager.save_user_config(user_id, user_config)
                     
                     await message.reply_text(
                         "✅ 频道组附加文字已清空！\n\n现在该频道组的消息将不再添加附加文字。",
                         reply_markup=generate_button_layout([[
-                            ("🔙 返回小尾巴设置", f"channel_tail_text:{pair_index}")
+                            ("🔙 返回小尾巴设置", f"channel_tail_text:{pair_id}")
                         ]])
                     )
                 else:
@@ -4262,28 +4255,21 @@ class TelegramBot:
                 frequency = int(text)
                 if 1 <= frequency <= 100:
                     # 检查是否是频道组特定设置
+                    pair_id = state.get('data', {}).get('pair_id')
                     pair_index = state.get('data', {}).get('pair_index')
                     
-                    if pair_index is not None:
+                    if pair_id is not None:
                         # 频道组特定设置
                         user_config = await self.data_manager.get_user_config(user_id)
-                        
-                        # 获取频道组信息
-                        channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-                        if pair_index >= len(channel_pairs):
-                            await message.reply_text("❌ 频道组不存在")
-                            return
-                        
-                        pair = channel_pairs[pair_index]
                         
                         # 确保channel_filters存在
                         if 'channel_filters' not in user_config:
                             user_config['channel_filters'] = {}
-                        if pair['id'] not in user_config['channel_filters']:
-                            user_config['channel_filters'][pair['id']] = {}
+                        if pair_id not in user_config['channel_filters']:
+                            user_config['channel_filters'][pair_id] = {}
                         
                         # 保存到频道组特定配置
-                        user_config['channel_filters'][pair['id']]['tail_frequency'] = frequency
+                        user_config['channel_filters'][pair_id]['tail_frequency'] = frequency
                         await self.data_manager.save_user_config(user_id, user_config)
                         
                         await message.reply_text(
@@ -4306,37 +4292,30 @@ class TelegramBot:
             # 移除位置设置，默认在消息结尾添加
             
             # 检查是否是频道组特定设置
+            pair_id = state.get('data', {}).get('pair_id')
             pair_index = state.get('data', {}).get('pair_index')
             
-            if pair_index is not None:
+            if pair_id is not None:
                 # 频道组特定设置
                 user_config = await self.data_manager.get_user_config(user_id)
-                
-                # 获取频道组信息
-                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-                if pair_index >= len(channel_pairs):
-                    await message.reply_text("❌ 频道组不存在")
-                    return
-                
-                pair = channel_pairs[pair_index]
                 
                 # 确保channel_filters存在
                 if 'channel_filters' not in user_config:
                     user_config['channel_filters'] = {}
-                if pair['id'] not in user_config['channel_filters']:
-                    user_config['channel_filters'][pair['id']] = {}
+                if pair_id not in user_config['channel_filters']:
+                    user_config['channel_filters'][pair_id] = {}
                 
                 # 保存到频道组特定配置
-                user_config['channel_filters'][pair['id']]['tail_text'] = text
-                user_config['channel_filters'][pair['id']]['tail_frequency'] = user_config.get('tail_frequency', 'always')
-                user_config['channel_filters'][pair['id']]['tail_position'] = user_config.get('tail_position', 'end')
+                user_config['channel_filters'][pair_id]['tail_text'] = text
+                user_config['channel_filters'][pair_id]['tail_frequency'] = user_config.get('tail_frequency', 'always')
+                user_config['channel_filters'][pair_id]['tail_position'] = user_config.get('tail_position', 'end')
                 
                 await self.data_manager.save_user_config(user_id, user_config)
                 
                 await message.reply_text(
                     f"✅ 频道组 {pair_index + 1} 附加文字设置成功！\n\n**当前文字：** {text}\n\n现在该频道组的消息将自动添加这个文字。",
                     reply_markup=generate_button_layout([[
-                        ("🔙 返回小尾巴设置", f"channel_tail_text:{pair_index}")
+                        ("🔙 返回小尾巴设置", f"channel_tail_text:{pair_id}")
                     ]])
                 )
             else:
@@ -4853,21 +4832,44 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             data = callback_query.data
             
-            # 检查是否包含频道组索引
+            # 检查是否包含频道组信息
             if ':' in data:
-                pair_index = int(data.split(':')[1])
-                # 获取频道组信息
-                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-                if pair_index >= len(channel_pairs):
-                    await callback_query.edit_message_text("❌ 频道组不存在")
-                    return
+                data_part = data.split(':')[1]
                 
-                pair = channel_pairs[pair_index]
+                # 判断是pair_id格式还是pair_index格式
+                if data_part.startswith('pair_'):
+                    # pair_id格式
+                    pair_id = data_part
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                    
+                    # 查找对应的频道组
+                    pair = None
+                    pair_index = None
+                    for i, p in enumerate(channel_pairs):
+                        if p.get('id') == pair_id:
+                            pair = p
+                            pair_index = i
+                            break
+                    
+                    if not pair:
+                        await callback_query.edit_message_text("❌ 频道组不存在")
+                        return
+                else:
+                    # pair_index格式（向后兼容）
+                    pair_index = int(data_part)
+                    channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+                    if pair_index >= len(channel_pairs):
+                        await callback_query.edit_message_text("❌ 频道组不存在")
+                        return
+                    
+                    pair = channel_pairs[pair_index]
+                    pair_id = pair.get('id', f'pair_{pair_index}')
+                
                 source_name = pair.get('source_name', f'频道{pair_index+1}')
                 target_name = pair.get('target_name', f'目标{pair_index+1}')
                 
                 config_title = f"📝 **频道组 {pair_index + 1} 小尾巴设置**\n\n📡 **采集频道：** {source_name}\n📤 **发布频道：** {target_name}\n\n"
-                return_callback = f"channel_tail_text:{pair_index}"
+                return_callback = f"channel_tail_text:{pair_id}"
             else:
                 config_title = "✨ **全局附加文字设置**\n\n"
                 return_callback = "show_feature_config_menu"
@@ -4892,7 +4894,7 @@ class TelegramBot:
             # 设置用户状态为等待附加文字输入
             self.user_states[user_id] = {
                 'state': 'waiting_for_tail_text',
-                'data': {'pair_index': pair_index if ':' in data else None}
+                'data': {'pair_id': pair_id if ':' in data else None, 'pair_index': pair_index if ':' in data else None}
             }
             
             # 生成按钮
@@ -6583,8 +6585,8 @@ class TelegramBot:
             
             # 生成小尾巴设置按钮
             buttons = [
-                [("🔄 设置小尾巴文本", f"request_tail_text:{pair_index}")],
-                [("⚙️ 设置添加频率", f"select_tail_frequency:{pair_index}")],
+                [("🔄 设置小尾巴文本", f"request_tail_text:{pair['id']}")],
+                [("⚙️ 设置添加频率", f"select_tail_frequency:{pair['id']}")],
                 [("🔙 返回过滤设置", f"channel_filters:{pair['id']}")]
             ]
             
