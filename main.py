@@ -7064,7 +7064,7 @@ class TelegramBot:
             # 设置用户状态为等待关键字输入
             self.user_states[user_id] = {
                 'state': 'waiting_for_channel_keywords',
-                'data': {'pair_index': pair_index}
+                'data': {'pair_id': pair['id'], 'pair_index': pair_index}
             }
             
             buttons = [["🔙 返回过滤配置", f"channel_filters:{pair['id']}"]]
@@ -7082,6 +7082,7 @@ class TelegramBot:
         """处理频道组关键字输入"""
         try:
             user_id = str(message.from_user.id)
+            pair_id = state['data']['pair_id']
             pair_index = state['data']['pair_index']
             text = message.text.strip()
             

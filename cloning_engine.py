@@ -144,6 +144,9 @@ class CloningEngine:
             logger.info(f"  • 当前频道组配置: {channel_filters}")
             logger.info(f"  • independent_enabled: {independent_enabled}")
             logger.info(f"  • 全局tail_text: '{user_config.get('tail_text', '')}'")
+            logger.info(f"  • 频道组tail_text: '{channel_filters.get('tail_text', '')}'")
+            logger.info(f"  • 频道组tail_frequency: {channel_filters.get('tail_frequency', 'not_set')}")
+            logger.info(f"  • 频道组tail_position: {channel_filters.get('tail_position', 'not_set')}")
             
             if independent_enabled:
                 # 使用频道组独立配置
