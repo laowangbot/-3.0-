@@ -108,6 +108,10 @@ DEFAULT_USER_CONFIG = {
 
 def get_config() -> Dict[str, Any]:
     """获取配置信息，优先使用环境变量"""
+    # 确保加载.env文件
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     # 处理Firebase凭据
     firebase_credentials = FIREBASE_CREDENTIALS
     firebase_credentials_env = os.getenv("FIREBASE_CREDENTIALS")
@@ -121,11 +125,14 @@ def get_config() -> Dict[str, Any]:
             print(f"⚠️ Firebase凭据JSON格式错误: {e}")
             print("使用默认配置，请检查FIREBASE_CREDENTIALS环境变量格式")
     
+    # 检查是否使用本地开发模式
+    use_local_storage = os.getenv("USE_LOCAL_STORAGE", "false").lower() == "true"
+    
     return {
         # 机器人配置
         "bot_id": os.getenv("BOT_ID", BOT_ID),
         "bot_name": os.getenv("BOT_NAME", BOT_NAME),
-        "api_id": int(os.getenv("API_ID", API_ID)),
+        "api_id": int(os.getenv("API_ID", API_ID)) if os.getenv("API_ID", API_ID) != "your_api_id" else 12345,
         "api_hash": os.getenv("API_HASH", API_HASH),
         "bot_token": os.getenv("BOT_TOKEN", BOT_TOKEN),
         
@@ -136,6 +143,9 @@ def get_config() -> Dict[str, Any]:
         # Firebase配置
         "firebase_credentials": firebase_credentials,
         "firebase_project_id": os.getenv("FIREBASE_PROJECT_ID", FIREBASE_PROJECT_ID),
+        
+        # 存储配置
+        "use_local_storage": use_local_storage,
     }
 
 # ==================== 配置验证 ====================

@@ -24,6 +24,7 @@ from pyrogram.errors import FloodWait, RPCError
 # 导入自定义模块
 from config import get_config, validate_config
 from multi_bot_data_manager import create_multi_bot_data_manager
+from local_data_manager import create_local_data_manager
 from ui_layouts import (
     generate_button_layout, MAIN_MENU_BUTTONS, CHANNEL_MANAGEMENT_BUTTONS,
     FEATURE_CONFIG_BUTTONS, MONITOR_SETTINGS_BUTTONS, TASK_MANAGEMENT_BUTTONS,
@@ -47,7 +48,14 @@ class TelegramBot:
         """初始化机器人"""
         self.config = get_config()
         self.bot_id = self.config.get('bot_id', 'default_bot')
-        self.data_manager = create_multi_bot_data_manager(self.bot_id)
+        
+        # 根据配置选择存储方式
+        if self.config.get('use_local_storage', False):
+            logger.info("🔧 使用本地存储模式")
+            self.data_manager = create_local_data_manager(self.bot_id)
+        else:
+            logger.info("🔧 使用Firebase存储模式")
+            self.data_manager = create_multi_bot_data_manager(self.bot_id)
         self.client = None
         self.cloning_engine = None
         # self.monitor_system = None  # 已移除监控系统

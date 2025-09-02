@@ -55,8 +55,22 @@ class LocalDataManager:
     def _save_index(self, index_data: Dict[str, Any]):
         """保存索引文件"""
         try:
-            with open(self.index_file, 'w', encoding='utf-8') as f:
-                json.dump(index_data, f, ensure_ascii=False, indent=2)
+            import tempfile
+            import shutil
+            
+            # 使用临时文件避免锁定问题
+            temp_file = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.json')
+            try:
+                json.dump(index_data, temp_file, ensure_ascii=False, indent=2)
+                temp_file.close()
+                
+                # 原子性替换
+                shutil.move(temp_file.name, self.index_file)
+            except Exception as e:
+                # 清理临时文件
+                if os.path.exists(temp_file.name):
+                    os.unlink(temp_file.name)
+                raise e
         except Exception as e:
             logger.error(f"保存索引文件失败: {e}")
     
@@ -74,9 +88,24 @@ class LocalDataManager:
     def _save_user_data(self, user_id: str, user_data: Dict[str, Any]) -> bool:
         """保存用户数据"""
         try:
+            import tempfile
+            import shutil
+            
             user_file = self._get_user_file_path(user_id)
-            with open(user_file, 'w', encoding='utf-8') as f:
-                json.dump(user_data, f, ensure_ascii=False, indent=2)
+            
+            # 使用临时文件避免锁定问题
+            temp_file = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.json')
+            try:
+                json.dump(user_data, temp_file, ensure_ascii=False, indent=2)
+                temp_file.close()
+                
+                # 原子性替换
+                shutil.move(temp_file.name, user_file)
+            except Exception as e:
+                # 清理临时文件
+                if os.path.exists(temp_file.name):
+                    os.unlink(temp_file.name)
+                raise e
             
             # 更新索引
             index_data = self._load_index()

@@ -33,12 +33,36 @@ class WebServer:
         
     async def health_check(self, request):
         """健康检查端点"""
-        return web.json_response({
-            'status': 'ok',
-            'timestamp': datetime.now().isoformat(),
-            'service': 'telegram-bot',
-            'version': '3.0'
-        })
+        try:
+            import psutil
+            
+            # 获取系统信息
+            memory = psutil.virtual_memory()
+            cpu_percent = psutil.cpu_percent()
+            
+            health_data = {
+                'status': 'ok',
+                'timestamp': datetime.now().isoformat(),
+                'service': 'telegram-bot',
+                'version': '3.0',
+                'memory_usage_percent': memory.percent,
+                'memory_used_mb': round(memory.used / 1024 / 1024, 2),
+                'memory_total_mb': round(memory.total / 1024 / 1024, 2),
+                'cpu_percent': cpu_percent
+            }
+            
+            # 内存使用警告
+            if memory.percent > 80:
+                health_data['status'] = 'warning'
+                health_data['warning'] = f'内存使用过高: {memory.percent}%'
+            
+            return web.json_response(health_data)
+        except Exception as e:
+            return web.json_response({
+                'status': 'error',
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            }, status=500)
         
     async def ping(self, request):
         """简单的ping端点"""
