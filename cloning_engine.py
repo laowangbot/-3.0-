@@ -766,7 +766,7 @@ class CloningEngine:
             if not task.start_time:
                 task.start_time = datetime.now()
             # 从配置中获取超时时间，如果没有配置则使用默认值
-            max_execution_time = task.config.get('task_timeout', 3600)  # 默认1小时
+            max_execution_time = task.config.get('task_timeout', 7200)  # 默认1小时
             
             # 检查是否为断点续传
             if task.is_resumed and task.resume_from_id:
@@ -1783,7 +1783,7 @@ class CloningEngine:
         """处理一批消息"""
         try:
             # 获取任务超时设置
-            max_execution_time = task.config.get('task_timeout', 3600) if hasattr(task, 'config') and task.config else 3600
+            max_execution_time = task.config.get('task_timeout', 7200) if hasattr(task, 'config') and task.config else 7200
             
             if not messages:
                 return True

@@ -73,12 +73,12 @@ DEFAULT_USER_CONFIG = {
     "tail_position": "end",  # start, end
     "tail_frequency": "always",  # always, interval, random
     "tail_interval": 5,
-    "tail_probability": 0.3,
+    "tail_probability": 1.0,
     
     "additional_buttons": [],
     "button_frequency": "always",  # always, interval, random
     "button_interval": 5,
-    "button_probability": 0.3,
+    "button_probability": 1.0,
     
     # 评论搬运设置已移除
     
@@ -98,7 +98,7 @@ DEFAULT_USER_CONFIG = {
     
     # 性能设置
     "message_delay": 0.05,  # 消息间隔（秒）- 优化响应速度
-    "media_group_delay": 0.1,  # 媒体组处理延迟（秒）- 优化响应速度
+    "media_group_delay": 0.2,  # 媒体组处理延迟（秒）- 优化响应速度
     "batch_size": 500,  # 批量处理大小 - 增加批量大小提高效率
     "retry_attempts": 2,  # 重试次数 - 减少以提高效率
     "retry_delay": 1.0,  # 重试延迟（秒）- 减少延迟提高响应速度
