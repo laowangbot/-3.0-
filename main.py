@@ -10,12 +10,16 @@ import os
 import signal
 import sys
 import time
+import argparse
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
+
+# 导入多机器人配置管理器
+from multi_bot_config_manager import multi_bot_manager, create_bot_config_template
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -44,9 +48,21 @@ logger = logging.getLogger(__name__)
 class TelegramBot:
     """Telegram机器人主类"""
     
-    def __init__(self):
+    def __init__(self, bot_name: Optional[str] = None):
         """初始化机器人"""
-        self.config = get_config()
+        # 如果指定了机器人名称，加载特定配置
+        if bot_name:
+            self.config = self._load_bot_specific_config(bot_name)
+            if not self.config:
+                raise ValueError(f"无法加载机器人 '{bot_name}' 的配置")
+        else:
+            # 不指定机器人名称时，尝试加载默认配置
+            self.config = self._load_bot_specific_config("default")
+            if not self.config:
+                # 如果默认配置也加载失败，直接报错
+                raise ValueError("无法加载默认机器人配置，请检查.env文件或使用 --bot 参数指定机器人")
+        
+        self.bot_name = bot_name or "default"
         self.bot_id = self.config.get('bot_id', 'default_bot')
         
         # 根据配置选择存储方式
@@ -74,6 +90,22 @@ class TelegramBot:
         # 设置信号处理
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _load_bot_specific_config(self, bot_name: str) -> Optional[Dict[str, Any]]:
+        """加载特定机器人的配置"""
+        # 优先从环境变量或.env文件加载
+        config = multi_bot_manager.load_bot_config_from_environment(bot_name)
+        if config:
+            return config
+        
+        # 回退到JSON配置文件
+        config = multi_bot_manager.load_bot_config(bot_name)
+        if config and multi_bot_manager.validate_bot_config(config):
+            logger.info(f"✅ 已从JSON配置文件加载机器人 '{bot_name}' 的配置")
+            return config
+        else:
+            logger.error(f"❌ 机器人 '{bot_name}' 配置无效或不存在")
+            return None
     
     async def _should_cleanup_session(self, session_name):
         """检查是否需要清理session文件"""
@@ -159,8 +191,17 @@ class TelegramBot:
                 return False
             
             # 初始化Telegram客户端
-            # 在Render环境中使用不同的session文件名
-            session_name = "render_bot_session" if self.config.get('is_render') else "bot_session"
+            # 使用配置中的session_name，如果没有则基于Bot Token生成
+            session_name = self.config.get('session_name')
+            if not session_name:
+                bot_token = self.config.get('bot_token', '')
+                if bot_token and bot_token != 'your_bot_token':
+                    # 使用token的前8位作为session文件名的一部分
+                    token_suffix = bot_token.split(':')[0][:8] if ':' in bot_token else bot_token[:8]
+                    session_name = f"bot_session_{token_suffix}"
+                else:
+                    # 回退到默认命名
+                    session_name = "render_bot_session" if self.config.get('is_render') else "bot_session"
             
             # 只在session文件损坏时才清理，而不是每次启动都清理
             if await self._should_cleanup_session(session_name):
@@ -10937,8 +10978,49 @@ class TelegramBot:
 async def main():
     """主函数"""
     try:
+        # 解析命令行参数
+        parser = argparse.ArgumentParser(description='Telegram搬运机器人')
+        parser.add_argument('--bot', type=str, help='指定机器人名称（使用bot_configs目录中的配置文件）')
+        parser.add_argument('--list-bots', action='store_true', help='列出所有可用的机器人配置')
+        parser.add_argument('--create-bot', type=str, help='创建新的机器人配置')
+        parser.add_argument('--setup', action='store_true', help='设置多机器人环境')
+        
+        args = parser.parse_args()
+        
+        # 处理特殊命令
+        if args.setup:
+            from multi_bot_config_manager import setup_multi_bot_environment
+            setup_multi_bot_environment()
+            return 0
+        
+        if args.list_bots:
+            configs = multi_bot_manager.list_bot_configs()
+            if configs:
+                print("📋 可用的机器人配置:")
+                for config in configs:
+                    print(f"  - {config}")
+            else:
+                print("❌ 没有找到任何机器人配置")
+                print("💡 使用 --setup 设置多机器人环境")
+            return 0
+        
+        if args.create_bot:
+            # 创建JSON配置文件
+            config = create_bot_config_template(args.create_bot)
+            config_file = multi_bot_manager.create_bot_config(args.create_bot, config)
+            print(f"✅ 已创建机器人配置: {config_file}")
+            
+            # 创建.env文件
+            from multi_bot_config_manager import create_env_file_template
+            env_file = create_env_file_template(args.create_bot)
+            print(f"✅ 已创建环境文件: {env_file}")
+            
+            print(f"📝 请编辑环境文件 {env_file} 并填入实际的配置值")
+            print(f"💡 然后使用 python main.py --bot {args.create_bot} 启动机器人")
+            return 0
+        
         # 创建机器人实例
-        bot = TelegramBot()
+        bot = TelegramBot(bot_name=args.bot)
         
         # 运行机器人
         await bot.run()

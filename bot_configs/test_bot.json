@@ -1,0 +1,12 @@
+{
+  "bot_name": "test_bot",
+  "bot_token": "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz",
+  "api_id": "12345678",
+  "api_hash": "abcdef1234567890abcdef1234567890",
+  "firebase_project_id": "your_project_id",
+  "use_local_storage": true,
+  "is_render": false,
+  "port": 8080,
+  "session_name": "bot_session_12345678",
+  "description": "机器人 test_bot 的配置"
+}
