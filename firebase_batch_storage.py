@@ -130,8 +130,14 @@ class FirebaseBatchStorage:
             except asyncio.CancelledError:
                 pass
         
-        # 处理剩余的待处理操作
-        await self._process_pending_operations()
+        # 处理剩余的待处理操作，设置超时避免卡住
+        try:
+            await asyncio.wait_for(self._process_pending_operations(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ 批量处理超时，强制停止")
+        except Exception as e:
+            logger.warning(f"⚠️ 停止时处理待处理操作出错: {e}")
+        
         logger.info("✅ 批量处理器已停止")
     
     async def _batch_processor(self):

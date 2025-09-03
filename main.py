@@ -6075,8 +6075,11 @@ t.me/test_channel
             if not self.config.get('use_local_storage', False):
                 try:
                     from firebase_batch_storage import stop_batch_processing
-                    await stop_batch_processing(self.bot_id)
+                    # 设置超时避免卡住
+                    await asyncio.wait_for(stop_batch_processing(self.bot_id), timeout=15.0)
                     logger.info("✅ Firebase批量存储处理器已停止")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ 停止批量存储处理器超时")
                 except Exception as e:
                     logger.warning(f"停止批量存储处理器时出错: {e}")
             
