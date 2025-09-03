@@ -260,6 +260,15 @@ class TelegramBot:
             self.cloning_engine.set_progress_callback(self._task_progress_callback)
             logger.info("✅ 进度回调函数设置完成")
             
+            # 启动批量存储处理器（如果使用Firebase存储）
+            if not self.config.get('use_local_storage', False):
+                try:
+                    from firebase_batch_storage import start_batch_processing
+                    await start_batch_processing(self.bot_id)
+                    logger.info("✅ Firebase批量存储处理器已启动")
+                except Exception as e:
+                    logger.warning(f"⚠️ 启动批量存储处理器失败: {e}")
+            
             # 监听系统已移除
             logger.info("✅ 核心系统初始化成功")
             
@@ -3672,6 +3681,7 @@ class TelegramBot:
         """处理文本消息"""
         try:
             user_id = str(message.from_user.id)
+            logger.info(f"🔍 处理文本消息: user_id={user_id}, text='{message.text[:50]}...'")
             
             # 检查用户状态
             if user_id in self.user_states:
@@ -3734,11 +3744,15 @@ class TelegramBot:
             
             # 默认处理：只有在用户没有状态时才显示主菜单
             if user_id not in self.user_states:
+                logger.info(f"🔍 用户 {user_id} 没有状态，显示主菜单")
+                # 先发送一个简单的确认消息
+                await message.reply_text("✅ 收到您的消息！正在为您打开主菜单...")
                 await self._show_main_menu(message)
             else:
                 # 如果用户有状态但没有匹配到处理分支，清除状态并显示主菜单
                 logger.warning(f"用户 {user_id} 有未处理的状态: {self.user_states[user_id]}")
                 del self.user_states[user_id]
+                await message.reply_text("✅ 状态已重置！正在为您打开主菜单...")
                 await self._show_main_menu(message)
             
         except Exception as e:
@@ -6028,6 +6042,7 @@ t.me/test_channel
         """信号处理器"""
         # 防止重复调用
         if hasattr(self, '_shutdown_called') and self._shutdown_called:
+            logger.info("关闭流程已在进行中，忽略重复信号")
             return
         
         signal_name = "SIGINT" if signum == 2 else "SIGTERM" if signum == 15 else f"信号{signum}"
@@ -6037,6 +6052,9 @@ t.me/test_channel
         # 设置停止事件，让主循环退出
         if hasattr(self, '_stop_event'):
             self._stop_event.set()
+            logger.info("✅ 停止事件已设置")
+        else:
+            logger.warning("⚠️ 停止事件未初始化")
     
     async def shutdown(self):
         """关闭机器人"""
@@ -6052,6 +6070,15 @@ t.me/test_channel
                     logger.warning(f"停止Web服务器时出错: {e}")
             
             # 监听系统已移除
+            
+            # 停止批量存储处理器
+            if not self.config.get('use_local_storage', False):
+                try:
+                    from firebase_batch_storage import stop_batch_processing
+                    await stop_batch_processing(self.bot_id)
+                    logger.info("✅ Firebase批量存储处理器已停止")
+                except Exception as e:
+                    logger.warning(f"停止批量存储处理器时出错: {e}")
             
             # 停止Telegram客户端
             if self.client:
@@ -6095,10 +6122,13 @@ t.me/test_channel
             
             # 保持运行直到收到停止信号
             try:
+                logger.info("⏳ 等待停止信号...")
                 await self._stop_event.wait()
-                logger.info("收到停止信号，开始关闭...")
+                logger.info("✅ 收到停止信号，开始关闭...")
             except KeyboardInterrupt:
-                logger.info("收到键盘中断信号")
+                logger.info("✅ 收到键盘中断信号")
+            except Exception as e:
+                logger.error(f"等待停止信号时出错: {e}")
             
         except Exception as e:
             logger.error(f"机器人运行出错: {e}")
