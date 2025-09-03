@@ -10,6 +10,14 @@ import random
 from typing import Dict, List, Any, Optional, Tuple
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
+# 导入增强过滤功能
+try:
+    from enhanced_link_filter import enhanced_link_filter
+    ENHANCED_FILTER_AVAILABLE = True
+except ImportError:
+    ENHANCED_FILTER_AVAILABLE = False
+    logger.warning("增强过滤功能不可用，请检查enhanced_link_filter.py文件")
+
 # 配置日志 - 显示详细状态信息
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -304,6 +312,22 @@ class MessageEngine:
                         flags=re.IGNORECASE
                     )
                     modified = True
+        
+        # 增强过滤处理
+        if effective_config.get('enhanced_filter_enabled', False) and ENHANCED_FILTER_AVAILABLE:
+            logger.info(f"🔍 应用增强过滤: mode={effective_config.get('enhanced_filter_mode', 'aggressive')}")
+            try:
+                # 应用增强过滤
+                filtered_text = enhanced_link_filter(processed_text, effective_config)
+                if filtered_text != processed_text:
+                    processed_text = filtered_text
+                    modified = True
+                    logger.info(f"✅ 增强过滤应用成功: 原始长度={len(processed_text)}, 过滤后长度={len(filtered_text)}")
+                else:
+                    logger.info("✅ 增强过滤检查通过，无需修改")
+            except Exception as e:
+                logger.error(f"❌ 增强过滤处理失败: {e}")
+                # 继续使用原始文本，不中断处理流程
         
         # 链接处理
         if effective_config.get('remove_links', False):

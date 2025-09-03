@@ -632,6 +632,14 @@ class TelegramBot:
                 await self._handle_set_button_frequency(callback_query)
             elif data == "show_link_filter_menu":
                 await self._handle_show_link_filter_menu(callback_query)
+            elif data == "show_enhanced_filter_menu":
+                await self._handle_show_enhanced_filter_menu(callback_query)
+            elif data == "toggle_enhanced_filter":
+                await self._handle_toggle_enhanced_filter(callback_query)
+            elif data == "toggle_enhanced_filter_mode":
+                await self._handle_toggle_enhanced_filter_mode(callback_query)
+            elif data == "preview_enhanced_filter":
+                await self._handle_preview_enhanced_filter(callback_query)
             elif data == "clear_additional_buttons":
                 await self._handle_clear_additional_buttons(callback_query)
             elif data.startswith("set_content_removal_mode:"):
@@ -5731,6 +5739,206 @@ class TelegramBot:
             
         except Exception as e:
             logger.error(f"处理显示链接过滤菜单失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _handle_show_enhanced_filter_menu(self, callback_query: CallbackQuery):
+        """处理显示增强过滤菜单"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            user_config = await self.data_manager.get_user_config(user_id)
+            
+            # 获取当前状态
+            enhanced_status = "✅ 已开启" if user_config.get('enhanced_filter_enabled', False) else "❌ 已关闭"
+            mode_text = user_config.get('enhanced_filter_mode', 'aggressive')
+            
+            # 处理模式文本
+            mode_display = {
+                'aggressive': '🔥 激进模式',
+                'moderate': '⚖️ 平衡模式', 
+                'conservative': '🛡️ 保守模式'
+            }.get(mode_text, '未知')
+            
+            config_text = f"""
+🚀 **增强版链接过滤设置**
+
+📊 **当前状态：**
+• 增强版过滤: {enhanced_status}
+• 过滤模式: {mode_display}
+
+💡 **功能说明：**
+• 增强版过滤：结合链接移除和广告内容过滤
+• 激进模式：移除所有链接、按钮和广告内容
+• 平衡模式：移除链接和明显广告内容
+• 保守模式：仅移除链接和按钮
+
+请选择要设置的过滤类型：
+            """.strip()
+            
+            # 生成按钮
+            buttons = [
+                [("🚀 增强版过滤", "toggle_enhanced_filter")],
+                [("⚙️ 过滤模式", "toggle_enhanced_filter_mode")],
+                [("👁️ 预览效果", "preview_enhanced_filter")],
+                [("🔙 返回功能配置", "show_feature_config_menu")]
+            ]
+            
+            await callback_query.edit_message_text(
+                config_text,
+                reply_markup=generate_button_layout(buttons)
+            )
+            
+        except Exception as e:
+            logger.error(f"处理显示增强过滤菜单失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _handle_toggle_enhanced_filter(self, callback_query: CallbackQuery):
+        """处理增强过滤开关切换"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            user_config = await self.data_manager.get_user_config(user_id)
+            
+            # 切换状态
+            current_state = user_config.get('enhanced_filter_enabled', False)
+            user_config['enhanced_filter_enabled'] = not current_state
+            
+            # 保存配置
+            await self.data_manager.save_user_config(user_id, user_config)
+            
+            # 重新显示菜单
+            await self._show_enhanced_filter_config(callback_query)
+            
+        except Exception as e:
+            logger.error(f"处理增强过滤开关切换失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _handle_toggle_enhanced_filter_mode(self, callback_query: CallbackQuery):
+        """处理增强过滤模式切换"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            user_config = await self.data_manager.get_user_config(user_id)
+            
+            # 切换模式
+            current_mode = user_config.get('enhanced_filter_mode', 'aggressive')
+            modes = ['aggressive', 'moderate', 'conservative']
+            current_index = modes.index(current_mode)
+            next_index = (current_index + 1) % len(modes)
+            user_config['enhanced_filter_mode'] = modes[next_index]
+            
+            # 保存配置
+            await self.data_manager.save_user_config(user_id, user_config)
+            
+            # 重新显示菜单
+            await self._show_enhanced_filter_config(callback_query)
+            
+        except Exception as e:
+            logger.error(f"处理增强过滤模式切换失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _handle_preview_enhanced_filter(self, callback_query: CallbackQuery):
+        """处理增强过滤预览"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            user_config = await self.data_manager.get_user_config(user_id)
+            
+            # 示例文本
+            sample_text = """这是一个测试消息，包含各种内容：
+
+🔗 链接测试：
+https://example.com
+t.me/test_channel
+@username
+
+📱 按钮测试：
+[点击查看详情]
+[立即购买]
+
+📢 广告测试：
+限时优惠！立即抢购！
+联系客服微信：test123
+免费咨询电话：400-123-4567
+
+📝 正常内容：
+这是一段正常的文本内容，应该被保留。"""
+            
+            # 应用增强过滤
+            from enhanced_link_filter import enhanced_link_filter
+            filtered_text = enhanced_link_filter(sample_text, user_config)
+            
+            preview_text = f"""
+👁️ **增强过滤预览效果**
+
+📝 **原始文本：**
+```
+{sample_text}
+```
+
+✨ **过滤后文本：**
+```
+{filtered_text}
+```
+
+💡 **说明：** 根据当前设置显示过滤效果
+            """.strip()
+            
+            await callback_query.edit_message_text(
+                preview_text,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 返回设置", callback_data="show_enhanced_filter_menu")
+                ]])
+            )
+            
+        except Exception as e:
+            logger.error(f"处理增强过滤预览失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _show_enhanced_filter_config(self, callback_query: CallbackQuery):
+        """显示增强过滤配置（避免MESSAGE_NOT_MODIFIED错误）"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            user_config = await self.data_manager.get_user_config(user_id)
+            
+            # 获取当前状态
+            enhanced_status = "✅ 已开启" if user_config.get('enhanced_filter_enabled', False) else "❌ 已关闭"
+            mode_text = user_config.get('enhanced_filter_mode', 'aggressive')
+            
+            # 处理模式文本
+            mode_display = {
+                'aggressive': '🔥 激进模式',
+                'moderate': '⚖️ 平衡模式', 
+                'conservative': '🛡️ 保守模式'
+            }.get(mode_text, '未知')
+            
+            config_text = f"""
+🚀 **增强版链接过滤设置**
+
+📊 **当前状态：**
+• 增强版过滤: {enhanced_status}
+• 过滤模式: {mode_display}
+
+💡 **功能说明：**
+• 增强版过滤：结合链接移除和广告内容过滤
+• 激进模式：移除所有链接、按钮和广告内容
+• 平衡模式：移除链接和明显广告内容
+• 保守模式：仅移除链接和按钮
+
+请选择要设置的过滤类型：
+            """.strip()
+            
+            # 生成按钮
+            buttons = [
+                [("🚀 增强版过滤", "toggle_enhanced_filter")],
+                [("⚙️ 过滤模式", "toggle_enhanced_filter_mode")],
+                [("👁️ 预览效果", "preview_enhanced_filter")],
+                [("🔙 返回功能配置", "show_feature_config_menu")]
+            ]
+            
+            await callback_query.edit_message_text(
+                config_text,
+                reply_markup=generate_button_layout(buttons)
+            )
+            
+        except Exception as e:
+            logger.error(f"显示增强过滤配置失败: {e}")
             await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
     
     async def _handle_toggle_remove_links_mode(self, callback_query: CallbackQuery):

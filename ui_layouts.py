@@ -66,7 +66,7 @@ FEATURE_CONFIG_BUTTONS = [
     ],
     [
         ("👤 移除用户名", "toggle_remove_usernames"),
-        ("🔗 移除链接", "show_link_filter_menu")
+        ("🚀 增强版链接过滤", "show_enhanced_filter_menu")
     ],
         [
         ("🔘 按钮移除", "manage_filter_buttons"),
@@ -86,6 +86,14 @@ FEATURE_CONFIG_BUTTONS = [
 ]
 
 
+
+# ==================== 增强过滤按钮布局 ====================
+ENHANCED_FILTER_BUTTONS = [
+    [("🚀 增强版链接过滤: {enhanced_status}", "toggle_enhanced_filter")],
+    [("⚙️ 过滤模式: {mode_text}", "toggle_enhanced_filter_mode")],
+    [("👁️ 预览效果", "preview_enhanced_filter")],
+    [("🔙 返回功能配置", "show_feature_config_menu")]
+]
 
 # ==================== 链接过滤按钮布局 ====================
 LINK_FILTER_BUTTONS = [
@@ -303,6 +311,7 @@ __all__ = [
     "CHANNEL_PAIR_EDIT_BUTTONS",
     "BATCH_OPERATION_BUTTONS",
     "FEATURE_CONFIG_BUTTONS",
+    "ENHANCED_FILTER_BUTTONS",
     "LINK_FILTER_BUTTONS",
     # 评论相关按钮布局已移除
     "FREQUENCY_SETTINGS_BUTTONS",
