@@ -7079,7 +7079,7 @@ class TelegramBot:
                 'data': {'pair_id': pair['id'], 'pair_index': pair_index}
             }
             
-            buttons = [["🔙 返回过滤配置", f"channel_filters:{pair['id']}"]]
+            buttons = [[("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]]
             
             await callback_query.edit_message_text(
                 config_text,
@@ -7440,7 +7440,7 @@ class TelegramBot:
                 'data': {'pair_index': pair_index}
             }
             
-            buttons = [["🔙 返回过滤配置", f"channel_filters:{pair['id']}"]]
+            buttons = [[("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]]
             
             await callback_query.edit_message_text(
                 config_text,
