@@ -12,21 +12,32 @@ from typing import Dict, Any, List, Optional
 import firebase_admin
 from firebase_admin import credentials, firestore
 from config import DEFAULT_USER_CONFIG
+from firebase_batch_storage import get_global_batch_storage, batch_set, batch_update, batch_delete
 
 logger = logging.getLogger(__name__)
 
 class MultiBotDataManager:
     """多机器人数据管理器类"""
     
-    def __init__(self, bot_id: str):
+    def __init__(self, bot_id: str, use_batch_storage: bool = None):
         """初始化数据管理器
         
         Args:
             bot_id: 机器人ID，用于数据分离
+            use_batch_storage: 是否使用批量存储，None时从配置读取
         """
         self.bot_id = bot_id
         self.db = None
         self.initialized = False
+        
+        # 从配置中读取批量存储设置
+        if use_batch_storage is None:
+            from config import get_config
+            config = get_config()
+            self.use_batch_storage = config.get('firebase_batch_enabled', True)
+        else:
+            self.use_batch_storage = use_batch_storage
+            
         self._init_firebase()
     
     def _init_firebase(self):
@@ -52,8 +63,32 @@ class MultiBotDataManager:
             
             # 获取Firestore数据库实例
             self.db = firestore.client()
+            
+            # 设置重试和配额优化配置
+            self.retry_count = 0
+            self.max_retries = 3
+            self.retry_delay = 1.0
+            self.last_request_time = 0
+            self.min_request_interval = 0.1  # 最小请求间隔100ms
+            
             self.initialized = True
             logger.info(f"✅ Firebase连接初始化成功 (Bot: {self.bot_id})")
+            
+            # 初始化批量存储
+            if self.use_batch_storage:
+                from firebase_batch_storage import set_global_batch_storage, FirebaseBatchStorage
+                
+                # 从配置中获取批量存储设置
+                batch_interval = config.get('firebase_batch_interval', 300)
+                max_batch_size = config.get('firebase_max_batch_size', 100)
+                
+                batch_storage = FirebaseBatchStorage(
+                    self.bot_id, 
+                    batch_interval=batch_interval,
+                    max_batch_size=max_batch_size
+                )
+                set_global_batch_storage(batch_storage)
+                logger.info(f"✅ 批量存储已启用 (Bot: {self.bot_id}, 间隔: {batch_interval}秒)")
             
         except Exception as e:
             logger.error(f"❌ Firebase连接初始化失败: {e}")
@@ -103,6 +138,14 @@ class MultiBotDataManager:
             logger.error("   2. 确保项目已启用Firestore数据库")
             logger.error("   3. 验证服务账号属于正确的项目")
         
+        elif 'quota' in error_str or 'limit' in error_str or '429' in error_str:
+            logger.error("📊 Firebase配额超限错误诊断:")
+            logger.error("   1. 检查API调用频率是否过高")
+            logger.error("   2. 考虑切换到本地存储模式")
+            logger.error("   3. 等待24小时后配额重置")
+            logger.error("   4. 升级Firebase计划")
+            logger.error("💡 建议运行: python firebase_quota_fix.py")
+        
         else:
             logger.error(f"🔧 其他Firebase错误: {error}")
             logger.error("   请检查网络连接和Firebase服务状态")
@@ -145,27 +188,55 @@ class MultiBotDataManager:
             return False
         
         try:
-            doc_ref = self._get_user_doc_ref(user_id)
-            
-            # 获取现有配置
-            existing_doc = doc_ref.get()
-            if existing_doc.exists:
-                existing_data = existing_doc.to_dict()
-                # 完全替换config字段，而不是合并
-                existing_data['config'] = config
-                existing_data['updated_at'] = datetime.now().isoformat()
-                doc_ref.set(existing_data)
+            # 如果使用批量存储，添加到批量队列
+            if self.use_batch_storage:
+                collection = f"bots/{self.bot_id}/users"
+                document = str(user_id)
+                
+                # 获取现有配置
+                doc_ref = self._get_user_doc_ref(user_id)
+                existing_doc = doc_ref.get()
+                
+                if existing_doc.exists:
+                    existing_data = existing_doc.to_dict()
+                    existing_data['config'] = config
+                    existing_data['updated_at'] = datetime.now().isoformat()
+                    data = existing_data
+                else:
+                    data = {
+                        'config': config,
+                        'bot_id': self.bot_id,
+                        'created_at': datetime.now().isoformat(),
+                        'updated_at': datetime.now().isoformat()
+                    }
+                
+                # 添加到批量存储队列
+                await batch_set(collection, document, data, self.bot_id)
+                logger.info(f"用户配置已加入批量存储队列: {user_id} (Bot: {self.bot_id})")
+                return True
             else:
-                # 新用户，直接设置
-                doc_ref.set({
-                    'config': config,
-                    'bot_id': self.bot_id,
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat()
-                })
-            
-            logger.info(f"用户配置保存成功: {user_id} (Bot: {self.bot_id})")
-            return True
+                # 实时存储
+                doc_ref = self._get_user_doc_ref(user_id)
+                
+                # 获取现有配置
+                existing_doc = doc_ref.get()
+                if existing_doc.exists:
+                    existing_data = existing_doc.to_dict()
+                    # 完全替换config字段，而不是合并
+                    existing_data['config'] = config
+                    existing_data['updated_at'] = datetime.now().isoformat()
+                    doc_ref.set(existing_data)
+                else:
+                    # 新用户，直接设置
+                    doc_ref.set({
+                        'config': config,
+                        'bot_id': self.bot_id,
+                        'created_at': datetime.now().isoformat(),
+                        'updated_at': datetime.now().isoformat()
+                    })
+                
+                logger.info(f"用户配置保存成功: {user_id} (Bot: {self.bot_id})")
+                return True
             
         except Exception as e:
             logger.error(f"保存用户配置失败 {user_id}: {e}")
@@ -200,14 +271,42 @@ class MultiBotDataManager:
             return False
         
         try:
-            doc_ref = self._get_user_doc_ref(user_id)
-            doc_ref.set({
-                'channel_pairs': channel_pairs,
-                'bot_id': self.bot_id,
-                'updated_at': datetime.now().isoformat()
-            }, merge=True)
-            logger.info(f"频道组列表保存成功: {user_id} (Bot: {self.bot_id})")
-            return True
+            if self.use_batch_storage:
+                # 使用批量存储
+                collection = f"bots/{self.bot_id}/users"
+                document = str(user_id)
+                
+                # 获取现有数据
+                doc_ref = self._get_user_doc_ref(user_id)
+                existing_doc = doc_ref.get()
+                
+                if existing_doc.exists:
+                    existing_data = existing_doc.to_dict()
+                    existing_data['channel_pairs'] = channel_pairs
+                    existing_data['updated_at'] = datetime.now().isoformat()
+                    data = existing_data
+                else:
+                    data = {
+                        'channel_pairs': channel_pairs,
+                        'bot_id': self.bot_id,
+                        'created_at': datetime.now().isoformat(),
+                        'updated_at': datetime.now().isoformat()
+                    }
+                
+                # 添加到批量存储队列
+                await batch_set(collection, document, data, self.bot_id)
+                logger.info(f"频道组列表已加入批量存储队列: {user_id} (Bot: {self.bot_id})")
+                return True
+            else:
+                # 实时存储
+                doc_ref = self._get_user_doc_ref(user_id)
+                doc_ref.set({
+                    'channel_pairs': channel_pairs,
+                    'bot_id': self.bot_id,
+                    'updated_at': datetime.now().isoformat()
+                }, merge=True)
+                logger.info(f"频道组列表保存成功: {user_id} (Bot: {self.bot_id})")
+                return True
             
         except Exception as e:
             logger.error(f"保存频道组列表失败 {user_id}: {e}")
@@ -445,9 +544,14 @@ class MultiBotDataManager:
 
 # ==================== 导出函数 ====================
 
-def create_multi_bot_data_manager(bot_id: str) -> MultiBotDataManager:
-    """创建多机器人数据管理器实例"""
-    return MultiBotDataManager(bot_id)
+def create_multi_bot_data_manager(bot_id: str, use_batch_storage: bool = True) -> MultiBotDataManager:
+    """创建多机器人数据管理器实例
+    
+    Args:
+        bot_id: 机器人ID
+        use_batch_storage: 是否使用批量存储，默认True
+    """
+    return MultiBotDataManager(bot_id, use_batch_storage)
 
 __all__ = [
     "MultiBotDataManager",

@@ -316,13 +316,16 @@ class MessageEngine:
         # 增强过滤处理
         if effective_config.get('enhanced_filter_enabled', False) and ENHANCED_FILTER_AVAILABLE:
             logger.info(f"🔍 应用增强过滤: mode={effective_config.get('enhanced_filter_mode', 'aggressive')}")
+            logger.info(f"🔍 增强过滤前文本: {repr(processed_text[:100])}...")
             try:
                 # 应用增强过滤
                 filtered_text = enhanced_link_filter(processed_text, effective_config)
+                logger.info(f"🔍 增强过滤后文本: {repr(filtered_text[:100])}...")
                 if filtered_text != processed_text:
+                    original_length = len(processed_text)
                     processed_text = filtered_text
                     modified = True
-                    logger.info(f"✅ 增强过滤应用成功: 原始长度={len(processed_text)}, 过滤后长度={len(filtered_text)}")
+                    logger.info(f"✅ 增强过滤应用成功: 原始长度={original_length}, 过滤后长度={len(filtered_text)}")
                 else:
                     logger.info("✅ 增强过滤检查通过，无需修改")
             except Exception as e:

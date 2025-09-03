@@ -59,6 +59,10 @@ DEFAULT_USER_CONFIG = {
     "remove_hashtags": False,
     "remove_usernames": False,
     
+    # 增强过滤设置
+    "enhanced_filter_enabled": True,  # 增强过滤开关
+    "enhanced_filter_mode": "moderate",  # aggressive, moderate, conservative
+    
     # 文件过滤设置
     "filter_photo": False,
     "filter_video": False,
@@ -97,11 +101,16 @@ DEFAULT_USER_CONFIG = {
     "task_timeout": 3600,  # 1小时
     
     # 性能设置
-    "message_delay": 0.05,  # 消息间隔（秒）- 优化响应速度
-    "media_group_delay": 0.2,  # 媒体组处理延迟（秒）- 优化响应速度
-    "batch_size": 500,  # 批量处理大小 - 增加批量大小提高效率
-    "retry_attempts": 2,  # 重试次数 - 减少以提高效率
-    "retry_delay": 1.0,  # 重试延迟（秒）- 减少延迟提高响应速度
+    "message_delay": 0.1,  # 消息间隔（秒）- 避免API限制
+    "media_group_delay": 0.5,  # 媒体组处理延迟（秒）- 避免API限制
+    "batch_size": 50,  # 批量处理大小 - 减少批量大小避免超时
+    "retry_attempts": 3,  # 重试次数 - 增加重试提高稳定性
+    "retry_delay": 2.0,  # 重试延迟（秒）- 增加延迟避免频繁重试
+    
+    # Firebase批量存储设置
+    "firebase_batch_enabled": True,  # 是否启用Firebase批量存储
+    "firebase_batch_interval": 300,  # 批量存储间隔（秒），默认5分钟
+    "firebase_max_batch_size": 100,  # 最大批量大小
 }
 
 # ==================== 环境变量配置 ====================

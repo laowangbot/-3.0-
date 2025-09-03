@@ -72,6 +72,37 @@ class TelegramBot:
         else:
             logger.info("🔧 使用Firebase存储模式")
             self.data_manager = create_multi_bot_data_manager(self.bot_id)
+            
+            # 在Render环境中检查Firebase配额问题
+            if self.config.get('is_render', False):
+                logger.info("🌐 检测到Render环境，检查Firebase配额状态...")
+                try:
+                    # 尝试简单的Firebase操作来检测配额问题
+                    import asyncio
+                    async def check_firebase():
+                        try:
+                            await self.data_manager.get_user_config("test_quota_check")
+                            return True
+                        except Exception as e:
+                            if "429" in str(e) or "quota" in str(e).lower():
+                                logger.warning("⚠️ 检测到Firebase配额超限")
+                                logger.warning("💡 建议在Render Dashboard中设置环境变量: USE_LOCAL_STORAGE=true")
+                                return False
+                            return True
+                    
+                    # 运行检查
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    quota_ok = loop.run_until_complete(check_firebase())
+                    loop.close()
+                    
+                    if not quota_ok:
+                        logger.warning("🚨 Firebase配额超限，建议切换到本地存储模式")
+                        logger.warning("📋 请查看 render_deployment_guide.md 文件获取详细说明")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Firebase配额检查失败: {e}")
+                    logger.warning("💡 建议切换到本地存储模式")
         self.client = None
         self.cloning_engine = None
         # self.monitor_system = None  # 已移除监控系统

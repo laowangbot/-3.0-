@@ -123,12 +123,19 @@ class UserSessionManager:
         """保存session元数据到Firebase"""
         try:
             from multi_bot_data_manager import create_multi_bot_data_manager
+            from firebase_batch_storage import batch_set
+            import asyncio
+            
             data_manager = create_multi_bot_data_manager(self.bot_id)
             
             if data_manager.initialized:
-                # 保存到Firebase
-                doc_ref = data_manager.db.collection('bots').document(self.bot_id).collection('system').document('session_metadata')
-                doc_ref.set(self.session_metadata)
+                # 使用批量存储保存元数据
+                collection = f"bots/{self.bot_id}/system"
+                document = "session_metadata"
+                
+                # 异步调用批量存储
+                asyncio.create_task(batch_set(collection, document, self.session_metadata, self.bot_id))
+                logger.info("✅ Session元数据已加入批量存储队列")
             else:
                 logger.warning("Firebase未初始化，无法保存session元数据")
                 
@@ -139,6 +146,7 @@ class UserSessionManager:
         """将session数据保存到Firebase"""
         try:
             from multi_bot_data_manager import create_multi_bot_data_manager
+            from firebase_batch_storage import batch_set
             import base64
             
             data_manager = create_multi_bot_data_manager(self.bot_id)
@@ -147,16 +155,19 @@ class UserSessionManager:
                 # 将session数据编码为base64
                 session_b64 = base64.b64encode(session_data).decode('utf-8')
                 
-                # 保存到Firebase
-                doc_ref = data_manager.db.collection('bots').document(self.bot_id).collection('user_sessions').document(user_id)
-                doc_ref.set({
+                # 使用批量存储保存session数据
+                collection = f"bots/{self.bot_id}/user_sessions"
+                document = str(user_id)
+                data = {
                     'session_data': session_b64,
                     'created_at': datetime.now().isoformat(),
                     'updated_at': datetime.now().isoformat(),
                     'bot_id': self.bot_id
-                })
+                }
                 
-                logger.info(f"✅ 用户 {user_id} 的session已保存到Firebase")
+                # 添加到批量存储队列
+                await batch_set(collection, document, data, self.bot_id)
+                logger.info(f"✅ 用户 {user_id} 的session已加入批量存储队列")
                 return True
             else:
                 logger.warning("Firebase未初始化，无法保存session数据")
