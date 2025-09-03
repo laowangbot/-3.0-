@@ -291,6 +291,22 @@ class MultiBotDataManager:
             logger.error(f"更新频道组失败: {e}")
             return False
     
+    async def get_channel_pair_by_channels(self, user_id: str, source_id: str, target_id: str) -> Optional[Dict[str, Any]]:
+        """根据源频道ID和目标频道ID查找频道组"""
+        try:
+            channel_pairs = await self.get_channel_pairs(user_id)
+            
+            for pair in channel_pairs:
+                if (pair.get('source_id') == source_id and pair.get('target_id') == target_id) or \
+                   (pair.get('source_id') == target_id and pair.get('target_id') == source_id):
+                    return pair
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"查找频道组失败: {e}")
+            return None
+    
     async def delete_channel_pair(self, user_id: str, pair_id: str) -> bool:
         """删除频道组"""
         try:
