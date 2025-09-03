@@ -276,7 +276,11 @@ class CloningEngine:
             )
             is_valid, validated_source_id, validated_target_id = validation_result
             if not is_valid:
-                raise ValueError("频道验证失败")
+                logger.error(f"❌ 频道验证失败详情:")
+                logger.error(f"   源频道: {source_chat_id} -> {validated_source_id}")
+                logger.error(f"   目标频道: {target_chat_id} -> {validated_target_id}")
+                logger.error(f"   验证结果: {is_valid}")
+                raise ValueError(f"频道验证失败: 源频道={source_chat_id}, 目标频道={target_chat_id}")
             logger.info(f"✅ 频道验证成功: {source_chat_id} -> {target_chat_id}")
             logger.info(f"✅ 使用验证后的频道ID: {validated_source_id} -> {validated_target_id}")
             

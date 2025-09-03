@@ -1297,6 +1297,8 @@ class TelegramBot:
                     'pair_id': pair['id'],
                     'source_chat_id': pair['source_id'],
                     'target_chat_id': pair['target_id'],
+                    'source_username': pair.get('source_username', ''),
+                    'target_username': pair.get('target_username', ''),
                     'start_id': start_id,
                     'end_id': end_id,
                     'message_ids': parsed_info['ids'],
@@ -1379,7 +1381,9 @@ class TelegramBot:
                             target_chat_id=config['target_chat_id'],
                             start_id=config.get('start_id'),
                             end_id=config.get('end_id'),
-                            config=config
+                            config=config,
+                            source_username=config.get('source_username', ''),
+                            target_username=config.get('target_username', '')
                         ),
                         timeout=60.0  # 60秒总超时
                     )
@@ -1417,8 +1421,18 @@ class TelegramBot:
                     await callback_query.message.reply_text(error_msg)
                     continue
                 except Exception as e:
-                    error_msg = f"❌ 频道组{config['pair_index']+1} 执行异常: {str(e)}"
-                    logger.error(error_msg)
+                    error_msg = f"❌ 频道组{config['pair_index']+1} 创建失败: {str(e)}"
+                    logger.error(f"频道组{config['pair_index']+1} 创建失败详情: {e}")
+                    logger.error(f"频道组{config['pair_index']+1} 配置: {config}")
+                    
+                    # 根据错误类型提供具体的解决方案
+                    if "频道验证失败" in str(e):
+                        error_msg += "\n\n💡 **可能的原因：**\n• 频道ID不正确\n• 机器人未加入频道\n• 频道权限不足\n• 频道不存在或已被删除"
+                    elif "超时" in str(e):
+                        error_msg += "\n\n💡 **可能的原因：**\n• 网络连接问题\n• 频道响应超时\n• 服务器负载过高"
+                    elif "权限" in str(e):
+                        error_msg += "\n\n💡 **可能的原因：**\n• 机器人权限不足\n• 频道设置为私密\n• 需要管理员权限"
+                    
                     # 向用户发送具体的错误信息
                     await callback_query.message.reply_text(error_msg)
                     continue
@@ -8996,7 +9010,9 @@ t.me/test_channel
                         target_chat_id=target_id,
                         start_id=start_id,
                         end_id=end_id,
-                        config=task_config
+                        config=task_config,
+                        source_username=pair.get('source_username', ''),
+                        target_username=pair.get('target_username', '')
                     )
                     
                     if task:
