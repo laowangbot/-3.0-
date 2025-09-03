@@ -289,6 +289,8 @@ class MessageEngine:
         logger = logging.getLogger(__name__)
         logger.info(f"🔍 开始处理文本: '{text[:100]}...' (长度: {len(text)})")
         logger.info(f"🔍 过滤配置: keywords={effective_config.get('filter_keywords', [])}, links_removal={effective_config.get('remove_links', False)}")
+        logger.info(f"🔍 增强过滤配置: enabled={effective_config.get('enhanced_filter_enabled', False)}, mode={effective_config.get('enhanced_filter_mode', 'N/A')}, available={ENHANCED_FILTER_AVAILABLE}")
+        logger.info(f"🔍 调试信息: _debug_enhanced_filter_enabled={effective_config.get('_debug_enhanced_filter_enabled')}, _debug_links_removal={effective_config.get('_debug_links_removal')}")
         
         # 关键字过滤
         if effective_config.get('filter_keywords'):
@@ -318,8 +320,33 @@ class MessageEngine:
             logger.info(f"🔍 应用增强过滤: mode={effective_config.get('enhanced_filter_mode', 'aggressive')}")
             logger.info(f"🔍 增强过滤前文本: {repr(processed_text[:100])}...")
             try:
+                # 构建增强过滤器专用配置
+                enhanced_config = {
+                    "remove_links": True,
+                    "remove_buttons": True,
+                    "remove_ads": True,
+                    "remove_usernames": effective_config.get('remove_usernames', False),
+                    "ad_keywords": [
+                        "广告", "推广", "优惠", "折扣", "免费", "限时", "抢购",
+                        "特价", "促销", "活动", "报名", "咨询", "联系", "微信",
+                        "QQ", "电话", "客服", "代理", "加盟", "投资", "理财",
+                        "解锁", "福利", "新增", "合集", "完整", "全套", "打包"
+                    ]
+                }
+                
+                # 根据过滤模式调整配置
+                filter_mode = effective_config.get('enhanced_filter_mode', 'moderate')
+                if filter_mode == 'conservative':
+                    enhanced_config["remove_ads"] = False
+                    enhanced_config["ad_keywords"] = enhanced_config["ad_keywords"][:8]  # 只保留基础广告词
+                elif filter_mode == 'aggressive':
+                    enhanced_config["remove_ads"] = True
+                    # 使用完整的广告词列表
+                
+                logger.info(f"🔍 增强过滤配置: {enhanced_config}")
+                
                 # 应用增强过滤
-                filtered_text = enhanced_link_filter(processed_text, effective_config)
+                filtered_text = enhanced_link_filter(processed_text, enhanced_config)
                 logger.info(f"🔍 增强过滤后文本: {repr(filtered_text[:100])}...")
                 if filtered_text != processed_text:
                     original_length = len(processed_text)

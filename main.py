@@ -722,6 +722,10 @@ class TelegramBot:
                 await self._handle_set_channel_links_mode(callback_query)
             elif data.startswith("set_channel_buttons_mode:"):
                 await self._handle_set_channel_buttons_mode(callback_query)
+            elif data.startswith("toggle_channel_enhanced_filter:"):
+                await self._handle_toggle_channel_enhanced_filter(callback_query)
+            elif data.startswith("set_channel_enhanced_mode:"):
+                await self._handle_set_channel_enhanced_mode(callback_query)
             elif data.startswith("toggle_enabled:"):
                 await self._handle_toggle_enabled(callback_query)
             elif data.startswith("toggle_pair_enabled:"):
@@ -804,14 +808,33 @@ class TelegramBot:
             """.strip()
             
             # 更新消息
-            await callback_query.edit_message_text(
-                menu_text,
-                reply_markup=generate_button_layout(MAIN_MENU_BUTTONS)
-            )
+            try:
+                await callback_query.edit_message_text(
+                    menu_text,
+                    reply_markup=generate_button_layout(MAIN_MENU_BUTTONS)
+                )
+            except Exception as edit_error:
+                # 如果编辑消息失败（如回调查询过期），发送新消息
+                if "QUERY_ID_INVALID" in str(edit_error) or "callback query id is invalid" in str(edit_error).lower():
+                    logger.info(f"回调查询过期，发送新的主菜单消息给用户 {user_id}")
+                    await self.client.send_message(
+                        user_id,
+                        menu_text,
+                        reply_markup=generate_button_layout(MAIN_MENU_BUTTONS)
+                    )
+                else:
+                    raise edit_error
             
         except Exception as e:
             logger.error(f"显示主菜单失败: {e}")
-            await callback_query.edit_message_text("❌ 显示菜单失败，请稍后重试")
+            try:
+                await callback_query.edit_message_text("❌ 显示菜单失败，请稍后重试")
+            except:
+                # 如果编辑失败，发送新消息
+                await self.client.send_message(
+                    str(callback_query.from_user.id),
+                    "❌ 显示菜单失败，请稍后重试"
+                )
     
     async def _handle_select_channels(self, callback_query: CallbackQuery, page: int = 0):
         """处理选择频道（支持多选和分页）"""
@@ -1411,58 +1434,71 @@ class TelegramBot:
                     
                     logger.info(f"创建多任务 {i+1}/{len(task_configs)}: 频道组{config['pair_index']+1}")
                     
-                    # 创建搬运任务（添加超时保护）
+                    # 创建搬运任务（添加超时保护和更好的异常处理）
                     logger.info(f"🔍 创建任务配置: start_id={config.get('start_id')}, end_id={config.get('end_id')}")
                     
                     # 添加整体超时保护，防止UI卡住
-                    task = await asyncio.wait_for(
-                        self.cloning_engine.create_task(
-                            source_chat_id=config['source_chat_id'],
-                            target_chat_id=config['target_chat_id'],
-                            start_id=config.get('start_id'),
-                            end_id=config.get('end_id'),
-                            config=config,
-                            source_username=config.get('source_username', ''),
-                            target_username=config.get('target_username', '')
-                        ),
-                        timeout=60.0  # 60秒总超时
-                    )
+                    try:
+                        task = await asyncio.wait_for(
+                            self.cloning_engine.create_task(
+                                source_chat_id=config['source_chat_id'],
+                                target_chat_id=config['target_chat_id'],
+                                start_id=config.get('start_id'),
+                                end_id=config.get('end_id'),
+                                config=config,
+                                source_username=config.get('source_username', ''),
+                                target_username=config.get('target_username', '')
+                            ),
+                            timeout=45.0  # 减少到45秒超时
+                        )
+                    except asyncio.TimeoutError:
+                        error_msg = f"⏰ 频道组{config['pair_index']+1} 创建超时：网络连接或频道权限问题"
+                        logger.error(error_msg)
+                        continue
+                    except Exception as create_error:
+                        error_msg = f"❌ 频道组{config['pair_index']+1} 创建失败: {str(create_error)}"
+                        logger.error(f"频道组{config['pair_index']+1} 创建失败详情: {create_error}")
+                        continue
                     
                     if task:
                         # 启动搬运任务
-                        success = await self.cloning_engine.start_cloning(task)
-                        if success:
-                            # 记录任务真实开始时间
-                            if hasattr(task, 'start_time') and task.start_time:
-                                config['start_time'] = task.start_time.isoformat()
+                        logger.info(f"🔧 [DEBUG] 准备启动任务: {task.task_id}, 频道组{config['pair_index']+1}")
+                        try:
+                            logger.info(f"🔧 [DEBUG] 调用start_cloning，任务: {task.task_id}")
+                            success = await asyncio.wait_for(
+                                self.cloning_engine.start_cloning(task),
+                                timeout=10.0  # 10秒启动超时
+                            )
+                            logger.info(f"🔧 [DEBUG] start_cloning返回结果: {success}, 任务: {task.task_id}")
+                            if success:
+                                # 记录任务真实开始时间
+                                if hasattr(task, 'start_time') and task.start_time:
+                                    config['start_time'] = task.start_time.isoformat()
+                                else:
+                                    config['start_time'] = datetime.now().isoformat()
+                                success_count += 1
+                                task_ids.append(task.task_id)
+                                logger.info(f"✅ 多任务 {i+1} 启动成功")
                             else:
-                                config['start_time'] = datetime.now().isoformat()
-                            success_count += 1
-                            task_ids.append(task.task_id)
-                            logger.info(f"✅ 多任务 {i+1} 启动成功")
-                        else:
-                            error_msg = f"❌ 频道组{config['pair_index']+1} 启动失败：可能达到并发限制或权限不足"
+                                error_msg = f"❌ 频道组{config['pair_index']+1} 启动失败：可能达到并发限制或权限不足"
+                                logger.error(error_msg)
+                        except asyncio.TimeoutError:
+                            error_msg = f"⏰ 频道组{config['pair_index']+1} 启动超时"
                             logger.error(error_msg)
-                            # 向用户发送具体的错误信息
-                            await callback_query.message.reply_text(error_msg)
+                        except Exception as start_error:
+                            error_msg = f"❌ 频道组{config['pair_index']+1} 启动异常: {str(start_error)}"
+                            logger.error(f"🔧 [DEBUG] start_cloning异常详情: {start_error}, 任务: {task.task_id}")
+                            logger.error(error_msg)
                     else:
                         error_msg = f"❌ 频道组{config['pair_index']+1} 创建失败：频道验证失败或配置错误"
                         logger.error(error_msg)
-                        # 向用户发送具体的错误信息
-                        await callback_query.message.reply_text(error_msg)
                     
                     # 任务间延迟
                     await asyncio.sleep(0.5)
                     
-                except asyncio.TimeoutError:
-                    error_msg = f"⏰ 频道组{config['pair_index']+1} 创建超时：网络连接或频道权限问题"
-                    logger.error(error_msg)
-                    # 向用户发送具体的错误信息
-                    await callback_query.message.reply_text(error_msg)
-                    continue
                 except Exception as e:
-                    error_msg = f"❌ 频道组{config['pair_index']+1} 创建失败: {str(e)}"
-                    logger.error(f"频道组{config['pair_index']+1} 创建失败详情: {e}")
+                    error_msg = f"❌ 频道组{config['pair_index']+1} 处理失败: {str(e)}"
+                    logger.error(f"频道组{config['pair_index']+1} 处理失败详情: {e}")
                     logger.error(f"频道组{config['pair_index']+1} 配置: {config}")
                     
                     # 根据错误类型提供具体的解决方案
@@ -1473,8 +1509,6 @@ class TelegramBot:
                     elif "权限" in str(e):
                         error_msg += "\n\n💡 **可能的原因：**\n• 机器人权限不足\n• 频道设置为私密\n• 需要管理员权限"
                     
-                    # 向用户发送具体的错误信息
-                    await callback_query.message.reply_text(error_msg)
                     continue
             
             # 强制更新UI状态，确保不会卡在"正在创建任务..."界面
@@ -1496,7 +1530,37 @@ class TelegramBot:
             
         except Exception as e:
             logger.error(f"执行多选搬运失败: {e}")
-            await callback_query.answer("❌ 执行失败，请稍后重试")
+            logger.exception("多选搬运异常详情:")  # 记录完整的异常堆栈
+            try:
+                await callback_query.answer("❌ 执行失败，请稍后重试")
+            except Exception as answer_error:
+                logger.error(f"回复用户失败: {answer_error}")
+            
+            # 确保UI不会卡住，显示错误界面
+            try:
+                error_text = f"""
+❌ **多任务搬运失败**
+
+🔍 **错误信息**: {str(e)}
+
+💡 **建议操作**:
+• 检查网络连接
+• 验证频道权限
+• 稍后重试操作
+• 联系技术支持
+                """.strip()
+                
+                buttons = [
+                    [("🔄 重试", "show_multi_select_menu")],
+                    [("🔙 返回主菜单", "show_main_menu")]
+                ]
+                
+                await callback_query.edit_message_text(
+                    error_text,
+                    reply_markup=generate_button_layout(buttons)
+                )
+            except Exception as ui_error:
+                logger.error(f"更新错误界面失败: {ui_error}")
     
     async def _task_progress_callback(self, task):
             """任务进度回调函数，用于实时更新任务进度"""
@@ -6064,22 +6128,32 @@ t.me/test_channel
             # 停止Web服务器
             if self.web_runner:
                 try:
-                    await self.web_runner.cleanup()
+                    await asyncio.wait_for(self.web_runner.cleanup(), timeout=5.0)
                     logger.info("✅ Web服务器已停止")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ 停止Web服务器超时，强制继续")
                 except Exception as e:
                     logger.warning(f"停止Web服务器时出错: {e}")
             
-            # 监听系统已移除
+            # 停止搬运引擎中的活动任务
+            if hasattr(self, 'cloning_engine') and self.cloning_engine:
+                try:
+                    await asyncio.wait_for(self.cloning_engine.stop_all_tasks(), timeout=5.0)
+                    logger.info("✅ 搬运引擎已停止")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ 停止搬运引擎超时，强制继续")
+                except Exception as e:
+                    logger.warning(f"停止搬运引擎时出错: {e}")
             
             # 停止批量存储处理器
             if not self.config.get('use_local_storage', False):
                 try:
                     from firebase_batch_storage import stop_batch_processing
-                    # 设置超时避免卡住
-                    await asyncio.wait_for(stop_batch_processing(self.bot_id), timeout=15.0)
+                    # 设置更短的超时避免卡住
+                    await asyncio.wait_for(stop_batch_processing(self.bot_id), timeout=5.0)
                     logger.info("✅ Firebase批量存储处理器已停止")
                 except asyncio.TimeoutError:
-                    logger.warning("⚠️ 停止批量存储处理器超时")
+                    logger.warning("⚠️ 停止批量存储处理器超时，强制继续")
                 except Exception as e:
                     logger.warning(f"停止批量存储处理器时出错: {e}")
             
@@ -6088,10 +6162,12 @@ t.me/test_channel
                 try:
                     # 检查客户端是否还在连接状态
                     if hasattr(self.client, 'is_connected') and self.client.is_connected:
-                        await self.client.stop()
+                        await asyncio.wait_for(self.client.stop(), timeout=5.0)
                         logger.info("✅ Telegram客户端已停止")
                     else:
                         logger.info("✅ Telegram客户端已经停止")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ 停止Telegram客户端超时，强制继续")
                 except Exception as e:
                     if "already terminated" in str(e) or "Client is already terminated" in str(e):
                         logger.info("✅ Telegram客户端已经停止")
@@ -6105,7 +6181,9 @@ t.me/test_channel
         
         finally:
             logger.info("✅ 关闭流程完成")
-            # 不再强制退出，让程序自然结束
+            # 强制退出，确保程序能够正常关闭
+            import os
+            os._exit(0)
     
     async def run(self):
         """运行机器人"""
@@ -7290,7 +7368,7 @@ t.me/test_channel
 • 关键字过滤: {keywords_status}
 • 敏感词替换: {replacements_status}
 • 文本内容移除: {content_removal_status}
-• 链接移除: {links_removal_status}
+• 增强版链接过滤: {links_removal_status}
 • 用户名移除: {usernames_removal_status}
 • 按钮移除: {buttons_removal_status}
 
@@ -7305,7 +7383,7 @@ t.me/test_channel
             buttons = [
                 [("🔄 独立过滤开关", f"toggle_channel_independent_filters:{pair['id']}")],
                 [("🔑 关键字过滤", f"channel_keywords:{pair['id']}"), ("🔄 敏感词替换", f"channel_replacements:{pair['id']}")],
-                [("📝 文本内容移除", f"channel_content_removal:{pair['id']}"), ("🔗 链接移除", f"channel_links_removal:{pair['id']}")],
+                [("📝 文本内容移除", f"channel_content_removal:{pair['id']}"), ("🚀 增强版链接过滤", f"channel_links_removal:{pair['id']}")],
                 [("👤 用户名移除", f"channel_usernames_removal:{pair['id']}"), ("🔘 按钮移除", f"channel_buttons_removal:{pair['id']}")],
                 [("📝 添加小尾巴", f"channel_tail_text:{pair['id']}"), ("🔘 添加按钮", f"channel_buttons:{pair['id']}")],
                 [("🔙 返回频道详情", f"edit_channel_pair:{pair['id']}")]
@@ -7961,7 +8039,7 @@ t.me/test_channel
             await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
     
     async def _handle_channel_links_removal(self, callback_query: CallbackQuery):
-        """处理频道组链接移除配置"""
+        """处理频道组增强链接过滤配置"""
         try:
             user_id = str(callback_query.from_user.id)
             data_part = callback_query.data.split(':')[1]
@@ -7995,33 +8073,46 @@ t.me/test_channel
                 return
             source_name = pair.get('source_name', f'频道{pair_index+1}')
             
-            # 获取该频道组的链接移除配置
+            # 获取该频道组的增强链接过滤配置
             user_config = await self.data_manager.get_user_config(user_id)
             channel_filters = user_config.get('channel_filters', {}).get(pair['id'], {})
-            links_removal = channel_filters.get('links_removal', False)
-            links_removal_mode = channel_filters.get('links_removal_mode', 'links_only')
+            enhanced_filter_enabled = channel_filters.get('enhanced_filter_enabled', False)
+            enhanced_filter_mode = channel_filters.get('enhanced_filter_mode', 'moderate')
             
-            mode_text = "智能移除链接" if links_removal_mode == 'links_only' else "移除整条消息"
+            # 模式描述
+            mode_descriptions = {
+                'aggressive': '激进模式 - 移除所有链接、按钮和广告',
+                'moderate': '中等模式 - 移除链接和明显广告',
+                'conservative': '保守模式 - 仅移除明显的垃圾链接'
+            }
+            mode_text = mode_descriptions.get(enhanced_filter_mode, '未知模式')
             
             config_text = f"""
-🔗 **频道组 {pair_index + 1} 链接移除**
+🚀 **频道组 {pair_index + 1} 增强链接过滤**
 
 📡 **采集频道：** {source_name}
 
-📊 **当前状态：** {'✅ 已启用' if links_removal else '❌ 已禁用'}
-🔧 **移除模式：** {mode_text}
+📊 **当前状态：** {'✅ 已启用' if enhanced_filter_enabled else '❌ 已禁用'}
+🔧 **过滤模式：** {mode_text}
 
 💡 **功能说明：**
-• 智能移除链接：只移除消息中的链接，保留其他内容
-• 移除整条消息：包含链接的整条消息将被完全移除
+• 激进模式：移除所有链接、按钮文本和广告内容
+• 中等模式：移除链接和明显的广告内容
+• 保守模式：仅移除明显的垃圾链接和广告
+
+🎯 **增强功能：**
+• 智能识别广告关键词
+• 自动移除按钮文本
+• 保留有用内容
 
 """.strip()
             
             # 生成配置按钮
             buttons = [
-                [("🔄 切换开关", f"toggle_channel_links_removal:{pair_index}")],
-                [("🔗 智能移除链接", f"set_channel_links_mode:{pair_index}:links_only")],
-                [("🗑️ 移除整条消息", f"set_channel_links_mode:{pair_index}:message_only")],
+                [("🔄 切换开关", f"toggle_channel_enhanced_filter:{pair_index}")],
+                [("🔥 激进模式", f"set_channel_enhanced_mode:{pair_index}:aggressive")],
+                [("⚖️ 中等模式", f"set_channel_enhanced_mode:{pair_index}:moderate")],
+                [("🛡️ 保守模式", f"set_channel_enhanced_mode:{pair_index}:conservative")],
                 [("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]
             ]
             
@@ -8031,7 +8122,7 @@ t.me/test_channel
             )
             
         except Exception as e:
-            logger.error(f"处理频道组链接移除失败: {e}")
+            logger.error(f"处理频道组增强链接过滤失败: {e}")
             await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
     
     async def _handle_channel_usernames_removal(self, callback_query: CallbackQuery):
@@ -8284,6 +8375,113 @@ t.me/test_channel
             
         except Exception as e:
             logger.error(f"处理频道组链接移除模式设置失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _handle_toggle_channel_enhanced_filter(self, callback_query: CallbackQuery):
+        """处理频道组增强过滤开关切换"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            pair_index = int(callback_query.data.split(':')[1])
+            
+            # 获取频道组信息
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+            if pair_index >= len(channel_pairs):
+                await callback_query.edit_message_text("❌ 频道组不存在")
+                return
+            
+            pair = channel_pairs[pair_index]
+            
+            # 获取用户配置
+            user_config = await self.data_manager.get_user_config(user_id)
+            if not user_config:
+                user_config = {}
+            
+            # 使用统一的初始化方法，确保关键字过滤默认为开启
+            channel_filters = await self._init_channel_filters(user_id, pair['id'])
+            current_status = channel_filters.get('enhanced_filter_enabled', False)
+            new_status = not current_status
+            
+            # 更新状态
+            channel_filters['enhanced_filter_enabled'] = new_status
+            
+            # 保存配置到用户配置
+            if 'channel_filters' not in user_config:
+                user_config['channel_filters'] = {}
+            user_config['channel_filters'][pair['id']] = channel_filters
+            await self.data_manager.save_user_config(user_id, user_config)
+            
+            await callback_query.answer(f"✅ 增强链接过滤已{'启用' if new_status else '禁用'}")
+            
+            # 返回配置页面
+            await self._handle_channel_links_removal(callback_query)
+            
+        except Exception as e:
+            logger.error(f"处理频道组增强过滤开关切换失败: {e}")
+            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+    
+    async def _handle_set_channel_enhanced_mode(self, callback_query: CallbackQuery):
+        """处理频道组增强过滤模式设置"""
+        try:
+            user_id = str(callback_query.from_user.id)
+            data_parts = callback_query.data.split(':')
+            pair_index = int(data_parts[1])
+            mode = data_parts[2]
+            
+            # 获取频道组信息
+            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+            if pair_index >= len(channel_pairs):
+                await callback_query.edit_message_text("❌ 频道组不存在")
+                return
+            
+            pair = channel_pairs[pair_index]
+            
+            # 获取用户配置
+            user_config = await self.data_manager.get_user_config(user_id)
+            if not user_config:
+                user_config = {}
+            
+            # 使用统一的初始化方法，确保关键字过滤默认为开启
+            channel_filters = await self._init_channel_filters(user_id, pair['id'])
+            
+            # 更新模式
+            channel_filters['enhanced_filter_mode'] = mode
+            channel_filters['enhanced_filter_enabled'] = True  # 启用功能
+            
+            # 保存配置到用户配置
+            if 'channel_filters' not in user_config:
+                user_config['channel_filters'] = {}
+            user_config['channel_filters'][pair['id']] = channel_filters
+            await self.data_manager.save_user_config(user_id, user_config)
+            
+            mode_descriptions = {
+                'aggressive': '激进模式',
+                'moderate': '中等模式',
+                'conservative': '保守模式'
+            }
+            mode_text = mode_descriptions.get(mode, '未知模式')
+            
+            await callback_query.answer(f"✅ 已设置为：{mode_text}")
+            
+            # 直接显示成功消息，不返回配置页面
+            success_text = f"""
+✅ **增强链接过滤模式设置成功！**
+
+📡 **频道组：** {pair_index + 1}
+🔧 **当前模式：** {mode_text}
+🚀 **功能状态：** ✅ 已启用
+
+💡 **说明：**
+• 激进模式：移除所有链接、按钮文本和广告内容
+• 中等模式：移除链接和明显的广告内容
+• 保守模式：仅移除明显的垃圾链接和广告
+
+🔙 发送 /menu 返回主菜单
+            """.strip()
+            
+            await callback_query.edit_message_text(success_text)
+            
+        except Exception as e:
+            logger.error(f"处理频道组增强过滤模式设置失败: {e}")
             await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
     
     async def _handle_toggle_channel_usernames_removal(self, callback_query: CallbackQuery):

@@ -167,11 +167,19 @@ class CloningEngine:
                     'content_removal': channel_filters.get('content_removal', False),
                     'content_removal_mode': channel_filters.get('content_removal_mode', 'text_only'),
                     
-                    # 链接移除
-                    'remove_links': channel_filters.get('links_removal', False),
-                    'remove_magnet_links': channel_filters.get('links_removal', False),
-                    'remove_all_links': channel_filters.get('links_removal', False),
-                    'remove_links_mode': channel_filters.get('links_removal_mode', 'links_only'),
+                    # 链接移除 - 映射到增强链接过滤
+                    'remove_links': False,  # 禁用普通链接过滤
+                    'remove_magnet_links': False,  # 禁用磁力链接过滤
+                    'remove_all_links': False,  # 禁用所有链接过滤
+                    'remove_links_mode': 'links_only',
+                    
+                    # 增强过滤 - 独立的增强过滤设置
+                    'enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled', channel_filters.get('links_removal', False)),
+                    'enhanced_filter_mode': channel_filters.get('enhanced_filter_mode', channel_filters.get('links_removal_mode', 'moderate')) if channel_filters.get('enhanced_filter_mode', channel_filters.get('links_removal_mode', 'moderate')) in ['aggressive', 'moderate', 'conservative'] else 'moderate',
+                    
+                    # 调试日志
+                    '_debug_enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled'),
+                    '_debug_links_removal': channel_filters.get('links_removal'),
                     
                     # 用户名移除
                     'remove_usernames': channel_filters.get('usernames_removal', False),
@@ -179,10 +187,6 @@ class CloningEngine:
                     # 按钮移除
                     'filter_buttons': channel_filters.get('buttons_removal', False),
                     'button_filter_mode': channel_filters.get('buttons_removal_mode', 'remove_all'),
-                    
-                    # 增强过滤
-                    'enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled', False),
-                    'enhanced_filter_mode': channel_filters.get('enhanced_filter_mode', 'moderate'),
                     
                     # 小尾巴和附加按钮
                     'tail_text': channel_filters.get('tail_text', ''),
@@ -350,7 +354,7 @@ class CloningEngine:
     
     async def _validate_channels(self, source_chat_id: str, target_chat_id: str, 
                                 source_username: str = "", target_username: str = "") -> tuple[bool, str, str]:
-        """验证频道是否有效，支持通过用户名访问公开频道
+        """验证频道是否有效，优先使用用户名验证
         返回: (验证结果, 实际源频道ID, 实际目标频道ID)
         """
         try:
@@ -362,89 +366,77 @@ class CloningEngine:
             validated_source_id = actual_source_id
             validated_target_id = actual_target_id
             
-            # 检查源频道
+            # 检查源频道 - 优先使用用户名
             source_chat = None
-            try:
-                # 如果是私密频道格式（@c/数字 或 -100数字），尝试多种前缀
-                if actual_source_id.startswith('@c/') or actual_source_id.startswith('-100'):
-                    source_chat = await self._try_private_channel_access(actual_source_id)
-                    if source_chat:
-                        # 记录验证成功的实际频道ID
-                        validated_source_id = str(source_chat.id)
-                        logger.info(f"私密源频道验证成功: {actual_source_id} -> {validated_source_id} ({source_chat.type})")
-                    else:
-                        # 如果多种前缀都失败，抛出异常进入用户名尝试逻辑
-                        raise Exception(f"所有前缀格式都无法访问私密频道: {actual_source_id}")
-                else:
-                    source_chat = await self.client.get_chat(actual_source_id)
+            if source_username:
+                try:
+                    logger.info(f"优先通过用户名访问源频道: @{source_username}")
+                    source_chat = await self.client.get_chat(source_username)
                     if source_chat:
                         validated_source_id = str(source_chat.id)
-                
-                if not source_chat:
-                    logger.error(f"源频道不存在: {actual_source_id}")
-                    return False, actual_source_id, actual_target_id
-                logger.info(f"源频道验证成功: {actual_source_id} ({source_chat.type})")
-            except Exception as e:
-                logger.warning(f"通过ID访问源频道失败 {actual_source_id}: {e}")
-                # 如果有用户名，尝试通过用户名访问
-                if source_username:
-                    try:
-                        logger.info(f"尝试通过用户名访问源频道: @{source_username}")
-                        source_chat = await self.client.get_chat(source_username)
+                        logger.info(f"通过用户名访问源频道成功: @{source_username} -> {validated_source_id} ({source_chat.type})")
+                except Exception as username_error:
+                    logger.warning(f"通过用户名访问源频道失败 @{source_username}: {username_error}")
+                    source_chat = None
+            
+            # 如果用户名验证失败，再尝试ID验证
+            if not source_chat:
+                try:
+                    logger.info(f"尝试通过ID访问源频道: {actual_source_id}")
+                    # 如果是私密频道格式，尝试多种前缀
+                    if actual_source_id.startswith('@c/') or actual_source_id.startswith('-100'):
+                        source_chat = await self._try_private_channel_access(actual_source_id)
                         if source_chat:
                             validated_source_id = str(source_chat.id)
-                            logger.info(f"通过用户名访问源频道成功: @{source_username} -> {validated_source_id} ({source_chat.type})")
-                        else:
-                            logger.error(f"通过用户名访问源频道失败: @{source_username}")
-                            return False, actual_source_id, actual_target_id
-                    except Exception as username_error:
-                        logger.error(f"通过用户名访问源频道失败 @{source_username}: {username_error}")
-                        return False, actual_source_id, actual_target_id
-                else:
-                    logger.error(f"无法访问源频道且没有用户名信息: {actual_source_id}")
+                            logger.info(f"私密源频道验证成功: {actual_source_id} -> {validated_source_id} ({source_chat.type})")
+                    else:
+                        source_chat = await self.client.get_chat(actual_source_id)
+                        if source_chat:
+                            validated_source_id = str(source_chat.id)
+                except Exception as e:
+                    logger.error(f"通过ID访问源频道失败 {actual_source_id}: {e}")
+                
+                if not source_chat:
+                    logger.error(f"源频道验证失败: {actual_source_id}")
                     return False, actual_source_id, actual_target_id
             
-            # 检查目标频道
+            logger.info(f"源频道验证成功: {actual_source_id} ({source_chat.type})")
+            
+            # 检查目标频道 - 优先使用用户名
             target_chat = None
-            try:
-                # 如果是私密频道格式（@c/数字 或 -100数字），尝试多种前缀
-                if actual_target_id.startswith('@c/') or actual_target_id.startswith('-100'):
-                    target_chat = await self._try_private_channel_access(actual_target_id)
-                    if target_chat:
-                        # 记录验证成功的实际频道ID
-                        validated_target_id = str(target_chat.id)
-                        logger.info(f"私密目标频道验证成功: {actual_target_id} -> {validated_target_id} ({target_chat.type})")
-                    else:
-                        # 如果多种前缀都失败，抛出异常进入用户名尝试逻辑
-                        raise Exception(f"所有前缀格式都无法访问私密频道: {actual_target_id}")
-                else:
-                    target_chat = await self.client.get_chat(actual_target_id)
+            if target_username:
+                try:
+                    logger.info(f"优先通过用户名访问目标频道: @{target_username}")
+                    target_chat = await self.client.get_chat(target_username)
                     if target_chat:
                         validated_target_id = str(target_chat.id)
-                
-                if not target_chat:
-                    logger.error(f"目标频道不存在: {actual_target_id}")
-                    return False, actual_source_id, actual_target_id
-                logger.info(f"目标频道验证成功: {actual_target_id} ({target_chat.type})")
-            except Exception as e:
-                logger.warning(f"通过ID访问目标频道失败 {actual_target_id}: {e}")
-                # 如果有用户名，尝试通过用户名访问
-                if target_username:
-                    try:
-                        logger.info(f"尝试通过用户名访问目标频道: @{target_username}")
-                        target_chat = await self.client.get_chat(target_username)
+                        logger.info(f"通过用户名访问目标频道成功: @{target_username} -> {validated_target_id} ({target_chat.type})")
+                except Exception as username_error:
+                    logger.warning(f"通过用户名访问目标频道失败 @{target_username}: {username_error}")
+                    target_chat = None
+            
+            # 如果用户名验证失败，再尝试ID验证
+            if not target_chat:
+                try:
+                    logger.info(f"尝试通过ID访问目标频道: {actual_target_id}")
+                    # 如果是私密频道格式，尝试多种前缀
+                    if actual_target_id.startswith('@c/') or actual_target_id.startswith('-100'):
+                        target_chat = await self._try_private_channel_access(actual_target_id)
                         if target_chat:
                             validated_target_id = str(target_chat.id)
-                            logger.info(f"通过用户名访问目标频道成功: @{target_username} -> {validated_target_id} ({target_chat.type})")
-                        else:
-                            logger.error(f"通过用户名访问目标频道失败: @{target_username}")
-                            return False, actual_source_id, actual_target_id
-                    except Exception as username_error:
-                        logger.error(f"通过用户名访问目标频道失败 @{target_username}: {username_error}")
-                        return False, actual_source_id, actual_target_id
-                else:
-                    logger.error(f"无法访问目标频道且没有用户名信息: {actual_target_id}")
+                            logger.info(f"私密目标频道验证成功: {actual_target_id} -> {validated_target_id} ({target_chat.type})")
+                    else:
+                        target_chat = await self.client.get_chat(actual_target_id)
+                        if target_chat:
+                            validated_target_id = str(target_chat.id)
+                except Exception as e:
+                    logger.error(f"通过ID访问目标频道失败 {actual_target_id}: {e}")
+                
+                if not target_chat:
+                    logger.error(f"目标频道验证失败: {actual_target_id}")
                     return False, actual_source_id, actual_target_id
+            
+            logger.info(f"目标频道验证成功: {actual_target_id} ({target_chat.type})")
             
             # 检查权限（使用验证成功的频道ID）
             if not await self._check_permissions(validated_source_id, validated_target_id):
@@ -649,43 +641,59 @@ class CloningEngine:
     
     async def start_cloning(self, task: CloneTask) -> bool:
         """开始搬运任务"""
+        logger.info(f"🔧 [DEBUG] 进入start_cloning方法: {task.task_id}")
+        logger.info(f"🔧 [DEBUG] 检查任务状态: {task.status}")
         if task.status != "pending":
             logger.warning(f"任务状态不正确: {task.status}")
             return False
+        logger.info(f"🔧 [DEBUG] 任务状态检查通过: {task.status}")
         
         # 检查总并发任务数限制
+        logger.info(f"🔧 [DEBUG] 检查总并发任务数: {len(self.active_tasks)}/{self.max_concurrent_tasks}")
         if len(self.active_tasks) >= self.max_concurrent_tasks:
             logger.warning(f"达到最大并发任务数限制: {self.max_concurrent_tasks}")
             return False
         
         # 检查用户并发任务数限制（支持动态配置）
         user_id = task.config.get('user_id') if task.config else None
+        logger.info(f"🔧 [DEBUG] 获取用户ID: {user_id}")
         if user_id:
             # 从用户配置读取并发限制，默认20个
+            logger.info(f"🔧 [DEBUG] 开始获取用户配置: {user_id}")
             try:
-                user_config = await get_user_config(user_id)
+                if self.data_manager:
+                    user_config = await self.data_manager.get_user_config(user_id)
+                else:
+                    user_config = await get_user_config(user_id)
                 max_user_concurrent = user_config.get('max_user_concurrent_tasks', 20)
-            except:
+                logger.info(f"🔧 [DEBUG] 用户配置获取成功，最大并发数: {max_user_concurrent}")
+            except Exception as e:
                 max_user_concurrent = 20  # 默认支持20个并发任务
+                logger.info(f"🔧 [DEBUG] 用户配置获取失败，使用默认值: {max_user_concurrent}, 错误: {e}")
             
             user_active_tasks = [t for t in self.active_tasks.values() if t.config.get('user_id') == user_id]
+            logger.info(f"🔧 [DEBUG] 用户当前活动任务数: {len(user_active_tasks)}/{max_user_concurrent}")
             if len(user_active_tasks) >= max_user_concurrent:
                 logger.warning(f"用户 {user_id} 已达到最大并发任务数限制: {max_user_concurrent}")
                 return False
         
         try:
             # 将任务添加到活动任务列表
+            logger.info(f"🔧 [DEBUG] 添加任务到活动列表: {task.task_id}")
             self.active_tasks[task.task_id] = task
             
+            logger.info(f"🔧 [DEBUG] 设置任务状态为running: {task.task_id}")
             task.status = "running"
             task.start_time = datetime.now()
             
-            logger.info(f"开始搬运任务: {task.task_id}")
+            logger.info(f"🔧 [DEBUG] 开始搬运任务: {task.task_id}")
             
             # 异步启动搬运任务，不等待完成
-            asyncio.create_task(self._execute_cloning_background(task))
+            logger.info(f"🔧 [DEBUG] 创建后台执行任务: {task.task_id}")
+            background_task = asyncio.create_task(self._execute_cloning_background(task))
+            logger.info(f"🔧 [DEBUG] 后台任务已创建: {task.task_id}, task_obj={background_task}")
             
-            logger.info(f"搬运任务已启动: {task.task_id}")
+            logger.info(f"🔧 [DEBUG] 搬运任务启动完成: {task.task_id}")
             return True
             
         except Exception as e:
@@ -729,14 +737,19 @@ class CloningEngine:
     async def _execute_cloning_background(self, task: CloneTask):
         """后台执行搬运任务"""
         try:
+            logger.info(f"🔧 [DEBUG] 进入后台执行方法: {task.task_id}")
             logger.info(f"🚀 开始后台执行搬运任务: {task.task_id}")
             
             # 执行搬运，添加超时保护
+            logger.info(f"🔧 [DEBUG] 准备调用_execute_cloning: {task.task_id}")
             try:
+                timeout_value = task.config.get('task_timeout', 3600)
+                logger.info(f"🔧 [DEBUG] 设置超时时间: {timeout_value}秒, 任务: {task.task_id}")
                 success = await asyncio.wait_for(
                     self._execute_cloning(task), 
-                    timeout=task.config.get('task_timeout', 3600)  # 默认1小时超时
+                    timeout=timeout_value  # 默认1小时超时
                 )
+                logger.info(f"🔧 [DEBUG] _execute_cloning完成，结果: {success}, 任务: {task.task_id}")
             except asyncio.TimeoutError:
                 logger.error(f"❌ 任务执行超时（{task.config.get('task_timeout', 3600)}秒），停止处理")
                 success = False
@@ -780,13 +793,17 @@ class CloningEngine:
     async def _execute_cloning(self, task: CloneTask) -> bool:
         """执行搬运逻辑（改为流式处理，支持断点续传）"""
         try:
+            logger.info(f"🔧 [DEBUG] 进入_execute_cloning方法: {task.task_id}")
             # 添加超时保护
             task_start_time = time.time()
+            logger.info(f"🔧 [DEBUG] 记录任务开始时间: {task_start_time}, 任务: {task.task_id}")
             # 保持start_time为datetime类型，用于UI显示
             if not task.start_time:
                 task.start_time = datetime.now()
+                logger.info(f"🔧 [DEBUG] 设置任务开始时间: {task.start_time}, 任务: {task.task_id}")
             # 从配置中获取超时时间，如果没有配置则使用默认值
             max_execution_time = task.config.get('task_timeout', 7200)  # 默认1小时
+            logger.info(f"🔧 [DEBUG] 设置最大执行时间: {max_execution_time}秒, 任务: {task.task_id}")
             
             # 检查是否为断点续传
             if task.is_resumed and task.resume_from_id:
@@ -796,9 +813,20 @@ class CloningEngine:
             else:
                 logger.info(f"🚀 开始新的流式搬运任务")
                 actual_start_id = task.start_id
+            logger.info(f"🔧 [DEBUG] 实际起始ID: {actual_start_id}, 任务: {task.task_id}")
             
-            # 获取第一批消息（100条）
-            first_batch = await self._get_first_batch(task.source_chat_id, actual_start_id, task.end_id)
+            # 获取第一批消息（100条），添加超时保护
+            logger.info(f"🔧 [DEBUG] 准备获取第一批消息，任务: {task.task_id}")
+            try:
+                logger.info(f"🔧 [DEBUG] 调用_get_first_batch，参数: source_chat_id={task.source_chat_id}, start_id={actual_start_id}, end_id={task.end_id}, 任务: {task.task_id}")
+                first_batch = await asyncio.wait_for(
+                    self._get_first_batch(task.source_chat_id, actual_start_id, task.end_id),
+                    timeout=30.0  # 30秒超时
+                )
+                logger.info(f"🔧 [DEBUG] _get_first_batch完成，获得{len(first_batch) if first_batch else 0}条消息，任务: {task.task_id}")
+            except asyncio.TimeoutError:
+                logger.error(f"获取第一批消息超时（30秒），任务: {task.task_id}")
+                return False
             
             if not first_batch:
                 logger.info("没有找到需要搬运的消息")
@@ -1976,18 +2004,33 @@ class CloningEngine:
                 
                 logger.info(f"获取第一批消息: {start_id} - {batch_end}")
                 
-                messages = await self.client.get_messages(
-                    chat_id, 
-                    message_ids=list(range(start_id, batch_end + 1))
-                )
+                # 添加超时保护，避免大范围消息ID查询卡住
+                try:
+                    messages = await asyncio.wait_for(
+                        self.client.get_messages(
+                            chat_id, 
+                            message_ids=list(range(start_id, batch_end + 1))
+                        ),
+                        timeout=25.0  # 25秒超时
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"获取消息超时（25秒），范围: {start_id} - {batch_end}")
+                    return []
                 
                 # 过滤掉None值
                 valid_messages = [msg for msg in messages if msg is not None]
                 logger.info(f"第一批消息获取成功: {len(valid_messages)} 条")
                 return valid_messages
             else:
-                # 获取最近500条消息
-                messages = await self.client.get_messages(chat_id, 500)
+                # 获取最近500条消息，添加超时保护
+                try:
+                    messages = await asyncio.wait_for(
+                        self.client.get_messages(chat_id, 500),
+                        timeout=25.0  # 25秒超时
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"获取最近500条消息超时（25秒），频道: {chat_id}")
+                    return []
                 
                 # 确保返回的是列表
                 if not isinstance(messages, list):

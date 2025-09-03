@@ -124,8 +124,13 @@ class DataManager:
             return DEFAULT_USER_CONFIG.copy()
         
         try:
+            # 使用异步方式获取文档
+            import asyncio
             doc_ref = self.db.collection('users').document(str(user_id))
-            doc = doc_ref.get()
+            
+            # 在线程池中执行同步操作
+            loop = asyncio.get_event_loop()
+            doc = await loop.run_in_executor(None, doc_ref.get)
             
             if doc.exists:
                 user_data = doc.to_dict()
@@ -149,22 +154,25 @@ class DataManager:
             return False
         
         try:
+            import asyncio
             doc_ref = self.db.collection('users').document(str(user_id))
             
             # 获取现有配置
-            existing_doc = doc_ref.get()
+            loop = asyncio.get_event_loop()
+            existing_doc = await loop.run_in_executor(None, doc_ref.get)
             if existing_doc.exists:
                 existing_data = existing_doc.to_dict()
                 # 完全替换config字段，而不是合并
                 existing_data['config'] = config
                 existing_data['updated_at'] = datetime.now().isoformat()
-                doc_ref.set(existing_data)
+                await loop.run_in_executor(None, doc_ref.set, existing_data)
             else:
                 # 新用户，直接设置
-                doc_ref.set({
+                user_data = {
                     'config': config,
                     'updated_at': datetime.now().isoformat()
-                })
+                }
+                await loop.run_in_executor(None, doc_ref.set, user_data)
             
             logger.info(f"用户配置保存成功: {user_id}")
             return True
@@ -183,8 +191,10 @@ class DataManager:
             return []
         
         try:
+            import asyncio
             doc_ref = self.db.collection('users').document(str(user_id))
-            doc = doc_ref.get()
+            loop = asyncio.get_event_loop()
+            doc = await loop.run_in_executor(None, doc_ref.get)
             
             if doc.exists:
                 user_data = doc.to_dict()
@@ -202,11 +212,14 @@ class DataManager:
             return False
         
         try:
+            import asyncio
             doc_ref = self.db.collection('users').document(str(user_id))
-            doc_ref.set({
+            data = {
                 'channel_pairs': channel_pairs,
                 'updated_at': datetime.now().isoformat()
-            }, merge=True)
+            }
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: doc_ref.set(data, merge=True))
             logger.info(f"频道组列表保存成功: {user_id}")
             return True
             
