@@ -2604,9 +2604,27 @@ class CloningEngine:
                 logger.info("📝 消息批次为空，跳过处理")
                 return True
             
-            # 按媒体组分组处理消息
+            # 按消息ID排序，确保按时间顺序处理
+            messages.sort(key=lambda m: m.id if m and hasattr(m, 'id') and m.id else 0)
+            logger.info(f"📊 消息已按ID排序，确保时间顺序处理")
+            
+            # 记录消息ID范围，用于验证顺序
+            if messages:
+                first_id = min(msg.id for msg in messages if hasattr(msg, 'id') and msg.id)
+                last_id = max(msg.id for msg in messages if hasattr(msg, 'id') and msg.id)
+                logger.info(f"📋 消息ID范围: {first_id} - {last_id} (共 {len(messages)} 条)")
+                
+                # 显示前5条和后5条消息的ID，用于验证顺序
+                if len(messages) >= 5:
+                    first_5_ids = [msg.id for msg in messages[:5] if hasattr(msg, 'id') and msg.id]
+                    last_5_ids = [msg.id for msg in messages[-5:] if hasattr(msg, 'id') and msg.id]
+                    logger.info(f"📋 前5条消息ID: {first_5_ids}")
+                    logger.info(f"📋 后5条消息ID: {last_5_ids}")
+            
+            # 按媒体组分组处理消息，但保持原始顺序
             media_groups = {}
             standalone_messages = []
+            processed_media_groups = set()  # 记录已处理的媒体组
             
             logger.debug(f"🔍 开始分析消息类型...")
             for i, message in enumerate(messages):
@@ -2635,20 +2653,46 @@ class CloningEngine:
             for media_group_id, group_messages in media_groups.items():
                 logger.info(f"  • 媒体组 {media_group_id}: {len(group_messages)} 条消息")
             
-            # 处理媒体组 - 安全顺序处理（确保媒体组完整性）
-            logger.info(f"🔄 开始顺序处理 {len(media_groups)} 个媒体组...")
+            # 按时间顺序处理所有消息（媒体组和独立消息混合）
+            logger.info(f"🔄 开始按时间顺序处理所有消息...")
             
-            # 按媒体组ID排序，确保处理顺序
-            sorted_media_groups = sorted(media_groups.items(), key=lambda x: x[0])
+            # 创建消息处理队列，按ID顺序排列
+            message_queue = []
             
-            for media_group_index, (media_group_id, group_messages) in enumerate(sorted_media_groups):
+            # 添加独立消息到队列
+            for message in standalone_messages:
+                message_queue.append(('standalone', message))
+            
+            # 添加媒体组到队列（按媒体组中最早消息的ID排序）
+            for media_group_id, group_messages in media_groups.items():
+                # 按消息ID排序媒体组内的消息
+                group_messages.sort(key=lambda m: m.id)
+                # 使用媒体组中最早消息的ID作为排序键
+                earliest_id = min(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id)
+                message_queue.append(('media_group', media_group_id, group_messages, earliest_id))
+            
+            # 按消息ID排序队列
+            message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (x[1].id if hasattr(x[1], 'id') and x[1].id else 0))
+            
+            logger.info(f"📋 消息队列已排序，共 {len(message_queue)} 个处理项")
+            
+            # 记录队列排序结果，用于验证顺序
+            if message_queue:
+                queue_info = []
+                for i, item in enumerate(message_queue[:10]):  # 只显示前10个
+                    if item[0] == 'standalone':
+                        queue_info.append(f"独立消息ID:{item[1].id}")
+                    elif item[0] == 'media_group':
+                        queue_info.append(f"媒体组ID:{item[1]}(最早:{item[3]})")
+                logger.info(f"📋 队列前10项: {queue_info}")
+                
+                if len(message_queue) > 10:
+                    logger.info(f"📋 ... 还有 {len(message_queue) - 10} 项")
+            
+            # 按顺序处理队列中的消息
+            for queue_index, item in enumerate(message_queue):
                 try:
-                    logger.info(f"📱 处理媒体组 {media_group_index + 1}/{len(media_groups)}: {media_group_id}")
-                    logger.info(f"🔍 媒体组详情:")
-                    logger.info(f"  • 媒体组ID: {media_group_id}")
-                    logger.info(f"  • 消息数量: {len(group_messages)}")
-                    logger.info(f"  • 任务状态: {task.status}")
-                    logger.info(f"  • 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    item_type = item[0]
                     
                     # 检查任务状态
                     if task.should_stop():
@@ -2661,33 +2705,59 @@ class CloningEngine:
                         logger.warning(f"⚠️ 任务执行超时（{elapsed_time:.1f}秒 > {max_execution_time}秒），停止处理")
                         return False
                     
-                    logger.debug(f"🔍 媒体组处理前检查:")
-                    logger.info(f"  • 任务运行时间: {elapsed_time:.1f}秒")
-                    logger.info(f"  • 是否应该停止: {task.should_stop()}")
+                    if item_type == 'standalone':
+                        # 处理独立消息
+                        message = item[1]
+                        logger.info(f"📝 处理独立消息 {queue_index + 1}/{len(message_queue)}: ID={message.id}")
+                        
+                        success = await self._process_single_message(task, message)
+                        
+                        if success:
+                            task.stats['processed_messages'] += 1
+                            task.processed_messages += 1
+                            task.save_progress(message.id)
+                            logger.info(f"✅ 独立消息 {message.id} 处理成功")
+                        else:
+                            task.stats['failed_messages'] += 1
+                            task.failed_messages += 1
+                            logger.error(f"❌ 独立消息 {message.id} 处理失败")
                     
-                    group_messages.sort(key=lambda m: m.id)
-                    logger.debug(f"🔧 开始处理媒体组 {media_group_id}...")
-                    start_process_time = time.time()
-                    
-                    success = await self._process_media_group(task, group_messages)
-                    
-                    process_duration = time.time() - start_process_time
-                    logger.debug(f"🔍 媒体组处理完成:")
-                    logger.info(f"  • 处理耗时: {process_duration:.2f}秒")
-                    logger.info(f"  • 处理结果: {success}")
-                    
-                    if success:
-                        task.stats['processed_messages'] += len(group_messages)
-                        task.processed_messages += len(group_messages)
-                        task.stats['media_groups'] += 1
-                        # 保存进度
-                        last_message_id = max(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
-                        task.save_progress(last_message_id)
-                        logger.info(f"✅ 媒体组 {media_group_id} 处理成功: {len(group_messages)} 条消息")
-                    else:
-                        task.stats['failed_messages'] += len(group_messages)
-                        task.failed_messages += len(group_messages)
-                        logger.error(f"❌ 媒体组 {media_group_id} 处理失败: {len(group_messages)} 条消息")
+                    elif item_type == 'media_group':
+                        # 处理媒体组
+                        media_group_id, group_messages, earliest_id = item[1], item[2], item[3]
+                        logger.info(f"📱 处理媒体组 {queue_index + 1}/{len(message_queue)}: {media_group_id} (最早消息ID: {earliest_id})")
+                        logger.info(f"🔍 媒体组详情:")
+                        logger.info(f"  • 媒体组ID: {media_group_id}")
+                        logger.info(f"  • 消息数量: {len(group_messages)}")
+                        logger.info(f"  • 任务状态: {task.status}")
+                        logger.info(f"  • 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        
+                        logger.debug(f"🔍 媒体组处理前检查:")
+                        logger.info(f"  • 任务运行时间: {elapsed_time:.1f}秒")
+                        logger.info(f"  • 是否应该停止: {task.should_stop()}")
+                        
+                        logger.debug(f"🔧 开始处理媒体组 {media_group_id}...")
+                        start_process_time = time.time()
+                        
+                        success = await self._process_media_group(task, group_messages)
+                        
+                        process_duration = time.time() - start_process_time
+                        logger.debug(f"🔍 媒体组处理完成:")
+                        logger.info(f"  • 处理耗时: {process_duration:.2f}秒")
+                        logger.info(f"  • 处理结果: {success}")
+                        
+                        if success:
+                            task.stats['processed_messages'] += len(group_messages)
+                            task.processed_messages += len(group_messages)
+                            task.stats['media_groups'] += 1
+                            # 保存进度
+                            last_message_id = max(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
+                            task.save_progress(last_message_id)
+                            logger.info(f"✅ 媒体组 {media_group_id} 处理成功: {len(group_messages)} 条消息")
+                        else:
+                            task.stats['failed_messages'] += len(group_messages)
+                            task.failed_messages += len(group_messages)
+                            logger.error(f"❌ 媒体组 {media_group_id} 处理失败: {len(group_messages)} 条消息")
                     
                     # 更新进度百分比
                     if hasattr(task, 'total_messages') and task.total_messages > 0:
@@ -2709,63 +2779,21 @@ class CloningEngine:
                     if self.progress_callback:
                         await self.progress_callback(task)
                     
-                    # 媒体组间安全延迟（确保媒体组完整性）
-                    media_group_delay = self.media_group_delay
-                    logger.debug(f"⏳ 媒体组处理完成，等待 {media_group_delay} 秒...")
-                    await asyncio.sleep(media_group_delay)
+                    # 消息间安全延迟（确保消息完整性）
+                    message_delay = self.media_group_delay
+                    logger.debug(f"⏳ 消息处理完成，等待 {message_delay} 秒...")
+                    await asyncio.sleep(message_delay)
                     
                 except Exception as e:
-                    logger.error(f"❌ 处理媒体组失败 {media_group_id}: {e}")
+                    logger.error(f"❌ 处理消息项失败: {e}")
                     logger.error(f"  • 错误类型: {type(e).__name__}")
                     logger.error(f"  • 错误详情: {str(e)}")
-                    task.stats['failed_messages'] += len(group_messages)
-                    task.failed_messages += len(group_messages)
-            
-            # 处理独立消息
-            for message in standalone_messages:
-                try:
-                    # 检查任务状态
-                    if task.should_stop():
-                        logger.info(f"任务 {task.task_id} 已被{task.status}，停止处理")
-                        return False
-                    
-                    # 检查超时
-                    if time.time() - task_start_time > max_execution_time:
-                        logger.warning(f"任务执行超时（{max_execution_time}秒），停止处理")
-                        return False
-                    
-                    success = await self._process_single_message(task, message)
-                    
-                    if success:
-                        task.stats['processed_messages'] += 1
-                        task.processed_messages += 1
-                        # 保存进度
-                        task.save_progress(message.id)
-                        logger.info(f"✅ 独立消息 {message.id} 处理成功")
-                    else:
+                    if item_type == 'standalone':
                         task.stats['failed_messages'] += 1
                         task.failed_messages += 1
-                        logger.error(f"❌ 独立消息 {message.id} 处理失败")
-                    
-                    # 更新进度百分比
-                    if hasattr(task, 'total_messages') and task.total_messages > 0:
-                        # 确保进度不超过100%
-                        task.progress = min((task.processed_messages / task.total_messages) * 100.0, 100.0)
-                    else:
-                        # 如果没有总消息数，使用已处理消息数作为进度
-                        task.progress = min(task.processed_messages * 10, 100.0)
-                    
-                    # 调用进度回调
-                    if self.progress_callback:
-                        await self.progress_callback(task)
-                    
-                    # 应用安全延迟（避免规律性操作）
-                    await self._apply_safe_delay()
-                    
-                except Exception as e:
-                    logger.error(f"处理消息失败: {e}")
-                    task.stats['failed_messages'] += 1
-                    task.failed_messages += 1
+                    elif item_type == 'media_group':
+                        task.stats['failed_messages'] += len(item[2])
+                        task.failed_messages += len(item[2])
             
             return True
             

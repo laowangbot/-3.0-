@@ -4,20 +4,20 @@
     "replacements_enabled": false,
     "filter_keywords": [],
     "replacement_words": {},
-    "content_removal": false,
+    "content_removal": true,
     "remove_links": false,
     "remove_links_mode": "links_only",
     "remove_magnet_links": false,
     "remove_all_links": false,
     "remove_hashtags": false,
-    "remove_usernames": false,
-    "enhanced_filter_enabled": false,
-    "enhanced_filter_mode": "moderate",
+    "remove_usernames": true,
+    "enhanced_filter_enabled": true,
+    "enhanced_filter_mode": "conservative",
     "filter_photo": false,
     "filter_video": false,
     "file_extensions": [],
     "filter_buttons": false,
-    "button_filter_mode": "remove_all",
+    "button_filter_mode": "remove_message",
     "tail_text": "",
     "tail_position": "end",
     "tail_frequency": "always",
@@ -185,5 +185,5 @@
       }
     }
   },
-  "updated_at": "2025-09-11T23:10:05.243012"
+  "updated_at": "2025-09-11T23:37:30.378332"
 }
