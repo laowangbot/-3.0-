@@ -808,50 +808,50 @@ class TelegramBot:
     async def _handle_user_api_login_flow(self, message: Message) -> bool:
         """处理 User API 登录流程"""
         try:
-        # 检查是否在Render环境中
-        if self.config.get('is_render', False):
-            # 检查User API是否已经登录
-            if self.user_api_logged_in and self.user_api_manager:
-                # 已经登录，不显示登录提示
-                await message.reply_text(
-                    "✅ **User API已登录**\n\n"
-                    "🔧 当前使用User API模式，功能正常\n"
-                    "💡 如需重新登录，请联系管理员"
-                )
-                return True
-            else:
-                # 未登录，显示登录选项
-                api_id = self.config.get('api_id', 0)
-                api_hash = self.config.get('api_hash', '')
-                
-                if api_id and api_hash:
-                    web_auth_url = f"https://my.telegram.org/auth?to=apps&app_id={api_id}"
+            # 检查是否在Render环境中
+            if self.config.get('is_render', False):
+                # 检查User API是否已经登录
+                if self.user_api_logged_in and self.user_api_manager:
+                    # 已经登录，不显示登录提示
                     await message.reply_text(
-                        "🌐 **Render环境User API登录**\n\n"
-                        "💡 **方法1：Telegram Web授权**\n"
-                        f"🔗 点击链接：{web_auth_url}\n"
-                        "1. 使用您的Telegram账号登录\n"
-                        "2. 授权应用访问\n"
-                        "3. 获取API凭据\n\n"
-                        "💡 **方法2：本地预登录**\n"
-                        "1. 在本地完成User API登录\n"
-                        "2. 将session文件上传到Render\n\n"
-                        "💡 **方法3：使用Bot API模式**\n"
-                        "🔧 当前使用Bot API模式，功能正常\n\n"
-                        "⚠️ **注意：** Render环境已启用本地存储降级模式"
+                        "✅ **User API已登录**\n\n"
+                        "🔧 当前使用User API模式，功能正常\n"
+                        "💡 如需重新登录，请联系管理员"
                     )
+                    return True
                 else:
-                    await message.reply_text(
-                        "🌐 **Render环境限制**\n\n"
-                        "❌ 在Render环境中无法接收手机验证码\n"
-                        "💡 **解决方案：**\n"
-                        "1. 在本地完成User API登录\n"
-                        "2. 将session文件上传到Render\n"
-                        "3. 或使用Bot API模式进行搬运\n\n"
-                        "🔧 当前使用Bot API模式，功能正常\n"
-                        "⚠️ **注意：** Render环境已启用本地存储降级模式"
-                    )
-                return True
+                    # 未登录，显示登录选项
+                    api_id = self.config.get('api_id', 0)
+                    api_hash = self.config.get('api_hash', '')
+                    
+                    if api_id and api_hash:
+                        web_auth_url = f"https://my.telegram.org/auth?to=apps&app_id={api_id}"
+                        await message.reply_text(
+                            "🌐 **Render环境User API登录**\n\n"
+                            "💡 **方法1：Telegram Web授权**\n"
+                            f"🔗 点击链接：{web_auth_url}\n"
+                            "1. 使用您的Telegram账号登录\n"
+                            "2. 授权应用访问\n"
+                            "3. 获取API凭据\n\n"
+                            "💡 **方法2：本地预登录**\n"
+                            "1. 在本地完成User API登录\n"
+                            "2. 将session文件上传到Render\n\n"
+                            "💡 **方法3：使用Bot API模式**\n"
+                            "🔧 当前使用Bot API模式，功能正常\n\n"
+                            "⚠️ **注意：** Render环境已启用本地存储降级模式"
+                        )
+                    else:
+                        await message.reply_text(
+                            "🌐 **Render环境限制**\n\n"
+                            "❌ 在Render环境中无法接收手机验证码\n"
+                            "💡 **解决方案：**\n"
+                            "1. 在本地完成User API登录\n"
+                            "2. 将session文件上传到Render\n"
+                            "3. 或使用Bot API模式进行搬运\n\n"
+                            "🔧 当前使用Bot API模式，功能正常\n"
+                            "⚠️ **注意：** Render环境已启用本地存储降级模式"
+                        )
+                    return True
             
             if not self.user_api_manager:
                 return False

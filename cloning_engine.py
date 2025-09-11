@@ -1116,9 +1116,11 @@ class CloningEngine:
             # 保存到数据库
             try:
                 user_id = task.config.get('user_id') if task.config else None
-                if user_id:
+                if user_id and data_manager:
                     await data_manager.add_task_record(user_id, task.to_dict())
                     logger.info(f"任务记录已保存到数据库: {task.task_id}")
+                elif not data_manager:
+                    logger.warning(f"数据管理器未初始化，跳过任务记录保存: {task.task_id}")
                 else:
                     logger.warning(f"无法保存任务记录到数据库，缺少用户ID: {task.task_id}")
             except Exception as e:
@@ -2381,9 +2383,11 @@ class CloningEngine:
         # 保存到数据库
         try:
             user_id = task.config.get('user_id') if task.config else None
-            if user_id:
+            if user_id and data_manager:
                 await data_manager.add_task_record(user_id, task.to_dict())
                 logger.info(f"取消任务记录已保存到数据库: {task_id}")
+            elif not data_manager:
+                logger.warning(f"数据管理器未初始化，跳过取消任务记录保存: {task_id}")
             else:
                 logger.warning(f"无法保存取消任务记录到数据库，缺少用户ID: {task_id}")
         except Exception as e:
@@ -2605,7 +2609,7 @@ class CloningEngine:
                 return True
             
             # 按消息ID排序，确保按时间顺序处理
-            messages.sort(key=lambda m: m.id if m and hasattr(m, 'id') and m.id else 0)
+            messages.sort(key=lambda m: m.id if m and hasattr(m, 'id') and m.id is not None else 0)
             logger.info(f"📊 消息已按ID排序，确保时间顺序处理")
             
             # 记录消息ID范围，用于验证顺序
@@ -2666,13 +2670,13 @@ class CloningEngine:
             # 添加媒体组到队列（按媒体组中最早消息的ID排序）
             for media_group_id, group_messages in media_groups.items():
                 # 按消息ID排序媒体组内的消息
-                group_messages.sort(key=lambda m: m.id)
+                group_messages.sort(key=lambda m: m.id if hasattr(m, 'id') and m.id is not None else 0)
                 # 使用媒体组中最早消息的ID作为排序键
-                earliest_id = min(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id)
+                earliest_id = min(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
                 message_queue.append(('media_group', media_group_id, group_messages, earliest_id))
             
             # 按消息ID排序队列
-            message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (x[1].id if hasattr(x[1], 'id') and x[1].id else 0))
+            message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (x[1].id if hasattr(x[1], 'id') and x[1].id is not None else 0))
             
             logger.info(f"📋 消息队列已排序，共 {len(message_queue)} 个处理项")
             
