@@ -21,7 +21,7 @@ BOT_TOKEN = "your_bot_token"
 # ==================== Render配置 ====================
 
 # 端口配置
-PORT = 8080
+PORT = 8092
 RENDER_EXTERNAL_URL = "your_render_url"  # 请替换为实际的Render URL
 
 # ==================== Firebase配置 ====================

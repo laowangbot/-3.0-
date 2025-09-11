@@ -447,7 +447,7 @@ class TelegramBot:
             
             # 初始化Web服务器
             self.web_server = await create_web_server(self)
-            self.web_runner = await self.web_server.start_server()
+            self.web_runner = await self.web_server.start_server(port=self.config.get('port', 8092))
             logger.info("✅ Web服务器启动成功")
             
             # 启动心跳任务（如果配置了Render URL）
@@ -909,104 +909,117 @@ class TelegramBot:
                 return
             
             # 初始化监听引擎使用 User API
-            from monitoring_engine import RealTimeMonitoringEngine
-            self.realtime_monitoring_engine = RealTimeMonitoringEngine(
-                self.user_api_manager.client,  # 使用 User API 客户端
-                self.cloning_engine, 
-                self.config
-            )
+            try:
+                from monitoring_engine import RealTimeMonitoringEngine
+                self.realtime_monitoring_engine = RealTimeMonitoringEngine(
+                    self.user_api_manager.client,  # 使用 User API 客户端
+                    self.cloning_engine, 
+                    self.config
+                )
+            except ImportError:
+                logger.warning("⚠️ monitoring_engine模块不存在，跳过监听引擎初始化")
+                self.realtime_monitoring_engine = None
+                return
             logger.info("✅ 监听引擎已初始化（User API 模式）")
             
             # 启动监听系统
             try:
-                await self.realtime_monitoring_engine.start_monitoring()
-                logger.info("✅ 监听系统已启动（User API 模式）")
+                if self.realtime_monitoring_engine:
+                    await self.realtime_monitoring_engine.start_monitoring()
+                    logger.info("✅ 监听系统已启动（User API 模式）")
+                else:
+                    logger.info("ℹ️ 监听引擎未初始化，跳过监听系统启动")
                 
-                # 直接在主程序中注册一个简单的消息处理器进行测试
-                @self.realtime_monitoring_engine.client.on_message()
-                async def main_realtime_handler(client, message):
-                    logger.info(f"🔔 [主程序实时] 收到消息: {message.id} from {message.chat.id}")
-                    logger.info(f"   消息类型: {message.media}")
-                    logger.info(f"   消息内容: {message.text or '无文本'}")
+                # 注册消息处理器（如果监听引擎存在）
+                if self.realtime_monitoring_engine:
+                    # 直接在主程序中注册一个简单的消息处理器进行测试
+                    @self.realtime_monitoring_engine.client.on_message()
+                    async def main_realtime_handler(client, message):
+                        logger.info(f"🔔 [主程序实时] 收到消息: {message.id} from {message.chat.id}")
+                        logger.info(f"   消息类型: {message.media}")
+                        logger.info(f"   消息内容: {message.text or '无文本'}")
+                    
+                    logger.info("✅ 主程序实时处理器注册成功")
+                else:
+                    logger.info("ℹ️ 监听引擎未初始化，跳过处理器注册")
                 
-                logger.info("✅ 主程序实时处理器注册成功")
-                
-                # 添加更多测试处理器
-                from pyrogram import filters
-                
-                @self.realtime_monitoring_engine.client.on_message(filters.all)
-                async def test_handler_1(client, message):
-                    logger.info(f"🔔 [测试处理器1] 收到消息: {message.id} from {message.chat.id}")
-                
-                @self.realtime_monitoring_engine.client.on_message(filters.text)
-                async def test_handler_2(client, message):
-                    logger.info(f"🔔 [测试处理器2] 收到消息: {message.id} from {message.chat.id}")
-                
-                logger.info("✅ 测试处理器注册成功")
+                # 添加更多测试处理器（如果监听引擎存在）
+                if self.realtime_monitoring_engine:
+                    from pyrogram import filters
+                    
+                    @self.realtime_monitoring_engine.client.on_message(filters.all)
+                    async def test_handler_1(client, message):
+                        logger.info(f"🔔 [测试处理器1] 收到消息: {message.id} from {message.chat.id}")
+                    
+                    @self.realtime_monitoring_engine.client.on_message(filters.text)
+                    async def test_handler_2(client, message):
+                        logger.info(f"🔔 [测试处理器2] 收到消息: {message.id} from {message.chat.id}")
+                    
+                    logger.info("✅ 测试处理器注册成功")
                 
             except Exception as e:
                 logger.error(f"❌ 实时监听启动失败: {e}")
                 logger.info("🔄 尝试切换到轮询模式...")
                 # 这里可以添加轮询模式的启动逻辑
             
-            # 添加简单版实时监听 - 直接使用最简单的逻辑
-            try:
-                from pyrogram.handlers import MessageHandler
-                from pyrogram import filters
-                
-                # 强制启动客户端
+            # 添加简单版实时监听 - 直接使用最简单的逻辑（如果监听引擎存在）
+            if self.realtime_monitoring_engine:
                 try:
-                    if not self.realtime_monitoring_engine.client.is_connected:
-                        await self.realtime_monitoring_engine.client.start()
-                        logger.info("✅ 强制启动User API客户端成功")
-                    else:
-                        logger.info("✅ User API客户端已经连接")
+                    from pyrogram.handlers import MessageHandler
+                    from pyrogram import filters
                     
-                    # 强制启动客户端的运行状态
+                    # 强制启动客户端
                     try:
-                        # 尝试获取用户信息来激活客户端
-                        me = await self.realtime_monitoring_engine.client.get_me()
-                        logger.info(f"✅ User API客户端已激活: {me.username}")
+                        if not self.realtime_monitoring_engine.client.is_connected:
+                            await self.realtime_monitoring_engine.client.start()
+                            logger.info("✅ 强制启动User API客户端成功")
+                        else:
+                            logger.info("✅ User API客户端已经连接")
+                        
+                        # 强制启动客户端的运行状态
+                        try:
+                            # 尝试获取用户信息来激活客户端
+                            me = await self.realtime_monitoring_engine.client.get_me()
+                            logger.info(f"✅ User API客户端已激活: {me.username}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ 激活User API客户端失败: {e}")
                     except Exception as e:
-                        logger.warning(f"⚠️ 激活User API客户端失败: {e}")
+                        logger.warning(f"⚠️ 强制启动User API客户端失败: {e}")
+                    
+                    # 简单版消息处理器 - 直接使用最简单的逻辑
+                    async def simple_realtime_handler(client, message):
+                        logger.info(f"🔔 [简单实时] 收到消息: {message.id} from {message.chat.id}")
+                        logger.info(f"   消息类型: {message.media}")
+                        logger.info(f"   消息内容: {message.text[:100] if message.text else '无文本'}")
+                    
+                    # 注册简单版处理器
+                    simple_handler = MessageHandler(simple_realtime_handler, filters.all)
+                    self.realtime_monitoring_engine.client.add_handler(simple_handler)
+                    logger.info("✅ 简单版实时监听处理器注册成功")
+                
+                    # 添加一个测试 - 使用装饰器语法
+                    try:
+                        @self.realtime_monitoring_engine.client.on_message(filters.all)
+                        async def decorator_realtime_handler(client, message):
+                            logger.info(f"🔔 [装饰器实时] 收到消息: {message.id} from {message.chat.id}")
+                        
+                        logger.info("✅ 装饰器实时处理器注册成功")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 装饰器实时处理器注册失败: {e}")
+                    
+                    # 添加一个测试 - 使用最基础的过滤器
+                    try:
+                        async def basic_realtime_handler(client, message):
+                            logger.info(f"🔔 [基础实时] 收到消息: {message.id} from {message.chat.id}")
+                        
+                        basic_handler = MessageHandler(basic_realtime_handler, filters.text | filters.photo | filters.video | filters.document)
+                        self.realtime_monitoring_engine.client.add_handler(basic_handler)
+                        logger.info("✅ 基础实时处理器注册成功")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 基础实时处理器注册失败: {e}")
                         
                 except Exception as e:
-                    logger.warning(f"⚠️ 强制启动User API客户端失败: {e}")
-                
-                # 简单版消息处理器 - 直接使用最简单的逻辑
-                async def simple_realtime_handler(client, message):
-                    logger.info(f"🔔 [简单实时] 收到消息: {message.id} from {message.chat.id}")
-                    logger.info(f"   消息类型: {message.media}")
-                    logger.info(f"   消息内容: {message.text[:100] if message.text else '无文本'}")
-                
-                # 注册简单版处理器
-                simple_handler = MessageHandler(simple_realtime_handler, filters.all)
-                self.realtime_monitoring_engine.client.add_handler(simple_handler)
-                logger.info("✅ 简单版实时监听处理器注册成功")
-                
-                # 添加一个测试 - 使用装饰器语法
-                try:
-                    @self.realtime_monitoring_engine.client.on_message(filters.all)
-                    async def decorator_realtime_handler(client, message):
-                        logger.info(f"🔔 [装饰器实时] 收到消息: {message.id} from {message.chat.id}")
-                    
-                    logger.info("✅ 装饰器实时处理器注册成功")
-                except Exception as e:
-                    logger.warning(f"⚠️ 装饰器实时处理器注册失败: {e}")
-                
-                # 添加一个测试 - 使用最基础的过滤器
-                try:
-                    async def basic_realtime_handler(client, message):
-                        logger.info(f"🔔 [基础实时] 收到消息: {message.id} from {message.chat.id}")
-                    
-                    basic_handler = MessageHandler(basic_realtime_handler, filters.text | filters.photo | filters.video | filters.document)
-                    self.realtime_monitoring_engine.client.add_handler(basic_handler)
-                    logger.info("✅ 基础实时处理器注册成功")
-                except Exception as e:
-                    logger.warning(f"⚠️ 基础实时处理器注册失败: {e}")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ 简单版实时监听注册失败: {e}")
+                    logger.warning(f"⚠️ 简单版实时监听注册失败: {e}")
             
         except Exception as e:
             logger.error(f"❌ 初始化监听引擎失败: {e}")
