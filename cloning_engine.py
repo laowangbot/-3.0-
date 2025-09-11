@@ -506,7 +506,7 @@ class CloningEngine:
                 logger.info(f"🚀 跳过消息数量计算，使用快速估算: {start_id}-{end_id}")
                 task.total_messages = int((end_id - start_id + 1) * 0.8)  # 快速估算
             else:
-            retry_count = 0
+                retry_count = 0
             max_retries = 3
             while retry_count < max_retries:
                 try:
@@ -1053,19 +1053,19 @@ class CloningEngine:
             async with semaphore:
                 try:
                     logger.info(f"🚀 启动批量任务 {index+1}/{len(tasks)}: {task.task_id}")
-                success = await self.start_cloning(task)
-                results[task.task_id] = success
-                
-                if success:
+                    success = await self.start_cloning(task)
+                    results[task.task_id] = success
+                    
+                    if success:
                         logger.info(f"✅ 批量任务 {index+1}/{len(tasks)} 启动成功")
-                else:
+                    else:
                         logger.error(f"❌ 批量任务 {index+1}/{len(tasks)} 启动失败")
-                
+                    
                     return success
                     
-            except Exception as e:
+                except Exception as e:
                     logger.error(f"❌ 批量任务 {index+1}/{len(tasks)} 启动异常: {e}")
-                results[task.task_id] = False
+                    results[task.task_id] = False
                     return False
         
         # 并发启动所有任务
@@ -1106,7 +1106,7 @@ class CloningEngine:
                 if total_messages > 0:
                     task.progress = min(100.0, (processed_messages / total_messages) * 100)
                 else:
-                task.progress = 100.0
+                    task.progress = 100.0
                 
                 task.status = "completed"
                 task.processed_messages = task.stats['processed_messages']
@@ -1460,7 +1460,7 @@ class CloningEngine:
             # 检查是否真的完成了所有消息
             if current_id > end_id:
                 logger.info(f"✅ 任务 {task.task_id} 已完成所有消息处理 (current_id: {current_id}, end_id: {end_id})")
-            return True
+                return True
             else:
                 logger.warning(f"⚠️ 任务 {task.task_id} 可能未完成所有消息 (current_id: {current_id}, end_id: {end_id})")
                 # 检查任务是否真的完成了
