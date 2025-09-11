@@ -506,28 +506,28 @@ class CloningEngine:
                 logger.info(f"🚀 跳过消息数量计算，使用快速估算: {start_id}-{end_id}")
                 task.total_messages = int((end_id - start_id + 1) * 0.8)  # 快速估算
             else:
-                retry_count = 0
-                max_retries = 3
-                while retry_count < max_retries:
-                    try:
-                        task.total_messages = await asyncio.wait_for(
-                            self._count_messages(validated_source_id, start_id, end_id),
-                            timeout=120.0  # 增加到120秒超时
-                        )
-                        break
-                    except asyncio.TimeoutError:
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            wait_time = retry_count * 2  # 递增延迟
-                            logger.warning(f"⚠️ 消息计数超时，{wait_time}秒后重试 ({retry_count}/{max_retries})")
-                            await asyncio.sleep(wait_time)
-                        else:
-                            logger.error(f"❌ 消息计数失败，已达到最大重试次数")
-                            task.total_messages = 1000  # 使用默认值
-                    except Exception as e:
-                        logger.error(f"❌ 消息计数异常: {e}")
+            retry_count = 0
+            max_retries = 3
+            while retry_count < max_retries:
+                try:
+                    task.total_messages = await asyncio.wait_for(
+                        self._count_messages(validated_source_id, start_id, end_id),
+                        timeout=120.0  # 增加到120秒超时
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = retry_count * 2  # 递增延迟
+                        logger.warning(f"⚠️ 消息计数超时，{wait_time}秒后重试 ({retry_count}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"❌ 消息计数失败，已达到最大重试次数")
                         task.total_messages = 1000  # 使用默认值
-                        break
+                except Exception as e:
+                    logger.error(f"❌ 消息计数异常: {e}")
+                    task.total_messages = 1000  # 使用默认值
+                    break
             task.stats['total_messages'] = task.total_messages
             logger.info(f"✅ 消息计数完成: {task.total_messages} 条")
             
@@ -1053,19 +1053,19 @@ class CloningEngine:
             async with semaphore:
                 try:
                     logger.info(f"🚀 启动批量任务 {index+1}/{len(tasks)}: {task.task_id}")
-                    success = await self.start_cloning(task)
-                    results[task.task_id] = success
-                    
-                    if success:
+                success = await self.start_cloning(task)
+                results[task.task_id] = success
+                
+                if success:
                         logger.info(f"✅ 批量任务 {index+1}/{len(tasks)} 启动成功")
-                    else:
+                else:
                         logger.error(f"❌ 批量任务 {index+1}/{len(tasks)} 启动失败")
-                    
+                
                     return success
                     
-                except Exception as e:
+            except Exception as e:
                     logger.error(f"❌ 批量任务 {index+1}/{len(tasks)} 启动异常: {e}")
-                    results[task.task_id] = False
+                results[task.task_id] = False
                     return False
         
         # 并发启动所有任务
@@ -1097,10 +1097,20 @@ class CloningEngine:
                 success = False
             
             if success:
-                task.status = "completed"
+                # 验证任务是否真的完成
+                progress = getattr(task, 'progress', 0)
+                processed_messages = getattr(task, 'processed_messages', 0)
+                total_messages = getattr(task, 'total_messages', 0)
+                
+                # 确保进度和消息数正确
+                if total_messages > 0:
+                    task.progress = min(100.0, (processed_messages / total_messages) * 100)
+                else:
                 task.progress = 100.0
+                
+                task.status = "completed"
                 task.processed_messages = task.stats['processed_messages']
-                logger.info(f"✅ 搬运任务完成: {task.task_id}")
+                logger.info(f"✅ 搬运任务完成: {task.task_id}, 进度: {task.progress}%, 处理: {task.processed_messages}/{total_messages}")
             else:
                 task.status = "failed"
                 logger.error(f"❌ 搬运任务失败: {task.task_id}")
@@ -1450,10 +1460,16 @@ class CloningEngine:
             # 检查是否真的完成了所有消息
             if current_id > end_id:
                 logger.info(f"✅ 任务 {task.task_id} 已完成所有消息处理 (current_id: {current_id}, end_id: {end_id})")
-                return True
+            return True
             else:
                 logger.warning(f"⚠️ 任务 {task.task_id} 可能未完成所有消息 (current_id: {current_id}, end_id: {end_id})")
-                return True  # 仍然返回True，因为可能没有更多消息
+                # 检查任务是否真的完成了
+                if task.should_stop():
+                    logger.info(f"✅ 任务 {task.task_id} 被停止，但已完成处理")
+                    return True
+                else:
+                    logger.warning(f"⚠️ 任务 {task.task_id} 未完成，继续处理")
+                    return False
             
         except Exception as e:
             logger.error(f"流式处理剩余消息失败: {e}")
@@ -2807,33 +2823,33 @@ class CloningEngine:
                         logger.info(f"  • 消息数量: {len(group_messages)}")
                         logger.info(f"  • 任务状态: {task.status}")
                         logger.info(f"  • 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                        
-                        logger.debug(f"🔍 媒体组处理前检查:")
-                        logger.info(f"  • 任务运行时间: {elapsed_time:.1f}秒")
-                        logger.info(f"  • 是否应该停止: {task.should_stop()}")
-                        
-                        logger.debug(f"🔧 开始处理媒体组 {media_group_id}...")
-                        start_process_time = time.time()
-                        
-                        success = await self._process_media_group(task, group_messages)
-                        
-                        process_duration = time.time() - start_process_time
-                        logger.debug(f"🔍 媒体组处理完成:")
-                        logger.info(f"  • 处理耗时: {process_duration:.2f}秒")
-                        logger.info(f"  • 处理结果: {success}")
-                        
-                        if success:
-                            task.stats['processed_messages'] += len(group_messages)
-                            task.processed_messages += len(group_messages)
-                            task.stats['media_groups'] += 1
-                            # 保存进度
-                            last_message_id = max(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
-                            task.save_progress(last_message_id)
-                            logger.info(f"✅ 媒体组 {media_group_id} 处理成功: {len(group_messages)} 条消息")
-                        else:
-                            task.stats['failed_messages'] += len(group_messages)
-                            task.failed_messages += len(group_messages)
-                            logger.error(f"❌ 媒体组 {media_group_id} 处理失败: {len(group_messages)} 条消息")
+                    
+                    logger.debug(f"🔍 媒体组处理前检查:")
+                    logger.info(f"  • 任务运行时间: {elapsed_time:.1f}秒")
+                    logger.info(f"  • 是否应该停止: {task.should_stop()}")
+                    
+                    logger.debug(f"🔧 开始处理媒体组 {media_group_id}...")
+                    start_process_time = time.time()
+                    
+                    success = await self._process_media_group(task, group_messages)
+                    
+                    process_duration = time.time() - start_process_time
+                    logger.debug(f"🔍 媒体组处理完成:")
+                    logger.info(f"  • 处理耗时: {process_duration:.2f}秒")
+                    logger.info(f"  • 处理结果: {success}")
+                    
+                    if success:
+                        task.stats['processed_messages'] += len(group_messages)
+                        task.processed_messages += len(group_messages)
+                        task.stats['media_groups'] += 1
+                        # 保存进度
+                        last_message_id = max(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
+                        task.save_progress(last_message_id)
+                        logger.info(f"✅ 媒体组 {media_group_id} 处理成功: {len(group_messages)} 条消息")
+                    else:
+                        task.stats['failed_messages'] += len(group_messages)
+                        task.failed_messages += len(group_messages)
+                        logger.error(f"❌ 媒体组 {media_group_id} 处理失败: {len(group_messages)} 条消息")
                     
                     # 更新进度百分比
                     if hasattr(task, 'total_messages') and task.total_messages > 0:

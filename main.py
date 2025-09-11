@@ -4184,12 +4184,22 @@ class TelegramBot:
                         logger.info(f"🔍 任务 {task_id} 状态: {task_status}")
                         
                         if task_status == "completed":
-                            completed_count += 1
-                            # 记录任务真实完成时间
-                            if i < len(task_configs) and hasattr(task, 'end_time') and task.end_time:
-                                task_configs[i]['end_time'] = task.end_time.isoformat()
-                            elif i < len(task_configs):
-                                task_configs[i]['end_time'] = datetime.now().isoformat()
+                            # 验证任务是否真的完成：检查进度是否达到100%
+                            progress = getattr(task, 'progress', 0)
+                            processed_messages = getattr(task, 'processed_messages', 0)
+                            total_messages = getattr(task, 'total_messages', 0)
+                            
+                            # 如果进度不是100%或处理的消息数不等于总消息数，认为任务还在运行
+                            if progress < 100.0 or (total_messages > 0 and processed_messages < total_messages):
+                                logger.warning(f"⚠️ 任务 {task_id} 状态为completed但进度不完整: {progress}%, {processed_messages}/{total_messages}")
+                                all_completed = False
+                            else:
+                                completed_count += 1
+                                # 记录任务真实完成时间
+                                if i < len(task_configs) and hasattr(task, 'end_time') and task.end_time:
+                                    task_configs[i]['end_time'] = task.end_time.isoformat()
+                                elif i < len(task_configs):
+                                    task_configs[i]['end_time'] = datetime.now().isoformat()
                         elif task_status == "failed":
                             failed_count += 1
                             # 记录任务真实失败时间
