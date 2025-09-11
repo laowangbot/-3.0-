@@ -7,12 +7,14 @@
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import List, Tuple, Dict, Any
 
-# ==================== 主菜单按钮布局 ====================
-MAIN_MENU_BUTTONS = [
-    [("🚀 开始搬运", "select_channel_pairs_to_clone")],
-    [("👂 实时监听", "show_monitor_menu")],
+# ==================== 主菜单按钮布局（带 User API 登录）====================
+MAIN_MENU_BUTTONS_WITH_USER_API = [
     [
-        ("⚙️ 频道管理", "show_channel_config_menu"),
+        ("🚀 搬运管理", "show_clone_test"),
+        ("📡 监听测试", "show_monitor_test")
+    ],
+    [
+        ("📋 频道管理", "show_channel_admin_test"),
         ("🔧 过滤设定", "show_feature_config_menu")
     ],
     [
@@ -22,6 +24,34 @@ MAIN_MENU_BUTTONS = [
     [
         ("🔍 当前配置", "view_config"),
         ("❓ 帮助", "show_help")
+    ],
+    [
+        ("🔐 User API 登录", "start_user_api_login"),
+        ("🔍 API 状态", "user_api_status")
+    ]
+]
+
+# ==================== 主菜单按钮布局（User API 已登录）====================
+MAIN_MENU_BUTTONS_USER_API_LOGGED_IN = [
+    [
+        ("🚀 搬运管理", "show_clone_test"),
+        ("📡 监听测试", "show_monitor_test")
+    ],
+    [
+        ("📋 频道管理", "show_channel_admin_test"),
+        ("🔧 过滤设定", "show_feature_config_menu")
+    ],
+    [
+        ("📜 我的任务", "view_tasks"),
+        ("📋 历史记录", "view_history")
+    ],
+    [
+        ("🔍 当前配置", "view_config"),
+        ("❓ 帮助", "show_help")
+    ],
+    [
+        ("🔐 User API 登出", "logout_user_api"),
+        ("🔍 API 状态", "user_api_status")
     ]
 ]
 
@@ -34,7 +64,9 @@ CHANNEL_MANAGEMENT_BUTTONS = [
         ("🗑️ 一键清空", "clear_all_channels")
     ],
     [
-        ("➕ 新增频道组", "add_channel_pair"),
+        ("➕ 新增频道组", "add_channel_pair")
+    ],
+    [
         ("🔙 返回主菜单", "show_main_menu")
     ]
 ]
@@ -70,7 +102,7 @@ FEATURE_CONFIG_BUTTONS = [
     ],
         [
         ("🔘 按钮移除", "manage_filter_buttons"),
-        ("📝 文本内容移除", "manage_content_removal")
+        ("📝 纯文本过滤", "manage_content_removal")
     ],
     [
         ("✨ 附加文字小尾巴", "request_tail_text"),
@@ -132,22 +164,6 @@ BUTTON_FREQUENCY_BUTTONS = [
     [("🔙 返回频率设置", "show_frequency_settings")]
 ]
 
-# ==================== 监听设置按钮布局 ====================
-MONITOR_SETTINGS_BUTTONS = [
-    [("👂 监听总开关: {monitor_status}", "toggle_realtime_listen")],
-    [("📋 选择监听频道 ({monitor_count}个)", "manage_monitor_channels")],
-    [("🔙 返回主菜单", "show_main_menu")]
-]
-
-# ==================== 监听频道管理按钮布局 ====================
-MONITOR_CHANNEL_MANAGEMENT_BUTTONS = [
-    # 监听频道选择按钮（动态生成）
-    [
-        ("✅ 全选", "monitor_select_all"),
-        ("❌ 全不选", "monitor_select_none")
-    ],
-    [("🔙 返回监听设置", "show_monitor_menu")]
-]
 
 # ==================== 任务确认按钮布局 ====================
 TASK_CONFIRMATION_BUTTONS = [
@@ -155,10 +171,24 @@ TASK_CONFIRMATION_BUTTONS = [
     [("❌ 取消", "cancel:{task_id}")]
 ]
 
+# ==================== 监听测试按钮布局 ====================
+MONITOR_TEST_BUTTONS = [
+    [("➕ 开始监听", "start_monitor_test")],
+    [("📋 我的监听", "view_monitor_tasks")],
+    [("⏹️ 停止监听", "stop_monitor_test")],
+    [("🔍 监听状态", "check_monitor_status")],
+    [("🔙 返回主菜单", "show_main_menu")]
+]
+
 # ==================== 任务管理按钮布局 ====================
 TASK_MANAGEMENT_BUTTONS = [
     [("📋 查看历史记录", "view_history")],
     [("📜 查看我的任务", "view_tasks")],
+    [("🔙 返回主菜单", "show_main_menu")]
+]
+
+# ==================== 频道管理测试按钮布局 ====================
+CHANNEL_ADMIN_TEST_BUTTONS = [
     [("🔙 返回主菜单", "show_main_menu")]
 ]
 
@@ -306,25 +336,26 @@ def generate_monitor_channel_buttons(monitored_pairs: List[Dict[str, Any]]) -> L
 
 # ==================== 导出所有按钮布局 ====================
 __all__ = [
-    "MAIN_MENU_BUTTONS",
+    "MAIN_MENU_BUTTONS_WITH_USER_API",
+    "MAIN_MENU_BUTTONS_USER_API_LOGGED_IN",
     "CHANNEL_MANAGEMENT_BUTTONS", 
     "CHANNEL_PAIR_EDIT_BUTTONS",
     "BATCH_OPERATION_BUTTONS",
     "FEATURE_CONFIG_BUTTONS",
     "ENHANCED_FILTER_BUTTONS",
     "LINK_FILTER_BUTTONS",
-    # 评论相关按钮布局已移除
     "FREQUENCY_SETTINGS_BUTTONS",
     "TAIL_FREQUENCY_BUTTONS",
     "BUTTON_FREQUENCY_BUTTONS",
-    "MONITOR_SETTINGS_BUTTONS",
-    "MONITOR_CHANNEL_MANAGEMENT_BUTTONS",
     "TASK_CONFIRMATION_BUTTONS",
+    "MONITOR_TEST_BUTTONS",
     "TASK_MANAGEMENT_BUTTONS",
+    "CHANNEL_ADMIN_TEST_BUTTONS",
     "HELP_AND_STATUS_BUTTONS",
     "BUTTON_STATUS_MAPPING",
     "generate_button_layout",
     "generate_channel_list_buttons",
-    "generate_pagination_buttons",
-    "generate_monitor_channel_buttons"
+    "generate_pagination_buttons"
 ]
+
+

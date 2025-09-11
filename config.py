@@ -60,7 +60,7 @@ DEFAULT_USER_CONFIG = {
     "remove_usernames": False,
     
     # 增强过滤设置
-    "enhanced_filter_enabled": True,  # 增强过滤开关
+    "enhanced_filter_enabled": False,  # 增强过滤开关
     "enhanced_filter_mode": "moderate",  # aggressive, moderate, conservative
     
     # 文件过滤设置
@@ -98,14 +98,16 @@ DEFAULT_USER_CONFIG = {
     # 任务设置
     "max_concurrent_tasks": 10,  # 支持最多10个并发任务
     "max_user_concurrent_tasks": 20,  # 用户最大并发任务数（支持20个频道组同时搬运）
-    "task_timeout": 3600,  # 1小时
+    "task_timeout": 86400,  # 24小时 - 适应大量消息搬运
+    "max_task_time": 172800,  # 单个任务最大运行时间（48小时）- 支持超大规模搬运
+    "progress_update_timeout": 172800,  # 进度更新循环最大运行时间（48小时）- 支持长期运行
     
     # 性能设置
-    "message_delay": 0.1,  # 消息间隔（秒）- 避免API限制
-    "media_group_delay": 0.5,  # 媒体组处理延迟（秒）- 避免API限制
-    "batch_size": 50,  # 批量处理大小 - 减少批量大小避免超时
-    "retry_attempts": 3,  # 重试次数 - 增加重试提高稳定性
-    "retry_delay": 2.0,  # 重试延迟（秒）- 增加延迟避免频繁重试
+    "message_delay": 0.05,  # 消息间隔（秒）- 优化大规模搬运速度
+    "media_group_delay": 0.3,  # 媒体组处理延迟（秒）- 优化处理速度
+    "batch_size": 100,  # 批量处理大小 - 增加批量大小提高效率
+    "retry_attempts": 5,  # 重试次数 - 增加重试次数提高稳定性
+    "retry_delay": 1.5,  # 重试延迟（秒）- 适度减少延迟提高效率
     
     # Firebase批量存储设置
     "firebase_batch_enabled": True,  # 是否启用Firebase批量存储
@@ -142,8 +144,8 @@ def get_config() -> Dict[str, Any]:
             print(f"⚠️ Firebase凭据JSON格式错误: {e}")
             print("使用默认配置，请检查FIREBASE_CREDENTIALS环境变量格式")
     
-    # 检查是否使用本地开发模式
-    use_local_storage = os.getenv("USE_LOCAL_STORAGE", "false").lower() == "true"
+    # 检查是否使用本地开发模式（默认使用本地存储）
+    use_local_storage = os.getenv("USE_LOCAL_STORAGE", "true").lower() == "true"
     
     # 获取配置值，优先使用环境变量
     bot_id = os.getenv("BOT_ID", BOT_ID)

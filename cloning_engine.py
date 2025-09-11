@@ -14,10 +14,11 @@ from pyrogram.types import Message, Chat, InputMediaPhoto, InputMediaVideo, Inpu
 from pyrogram.errors import FloodWait
 from message_engine import MessageEngine
 from data_manager import get_user_config, data_manager
+from config import DEFAULT_USER_CONFIG
 
-# 配置日志 - 显示详细状态信息
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# 配置日志 - 使用优化的日志配置
+from log_config import get_logger
+logger = get_logger(__name__)
 
 class CloneTask:
     """搬运任务类"""
@@ -47,6 +48,9 @@ class CloneTask:
         self.last_processed_message_id = None  # 最后处理的消息ID
         self.resume_from_id = None  # 恢复时的起始消息ID
         self.is_resumed = False  # 是否为恢复的任务
+        
+        # 取消标志
+        self._cancelled = False  # 内部取消标志，用于立即停止任务
         
         # 统计信息
         self.stats = {
@@ -93,7 +97,7 @@ class CloneTask:
     
     def should_stop(self) -> bool:
         """检查任务是否应该停止（取消或暂停）"""
-        return self.status in ["cancelled", "paused"]
+        return self.status in ["cancelled", "paused"] or self._cancelled
     
     def save_progress(self, message_id: int):
         """保存当前进度"""
@@ -118,16 +122,115 @@ class CloningEngine:
         self.active_tasks: Dict[str, CloneTask] = {}
         self.task_history: List[Dict[str, Any]] = []
         
-        # 性能设置
-        self.message_delay = config.get('message_delay', 0.3)  # 减少延迟到0.3秒
-        self.batch_size = config.get('batch_size', 100)  # 批次大小改为100
-        self.retry_attempts = config.get('retry_attempts', 3)
-        self.retry_delay = config.get('retry_delay', 1.5)  # 减少重试延迟到1.5秒
-        self.max_concurrent_tasks = config.get('max_concurrent_tasks', 5)  # 减少到5个并发任务避免API限制
-        self.max_concurrent_channels = config.get('max_concurrent_channels', 2)  # 每个任务最多2个频道组并发启动
+        # 记录客户端类型
+        self.client_type = type(client).__name__
+        logger.info(f"🔧 搬运引擎初始化，使用客户端类型: {self.client_type}")
+        self.background_tasks: Dict[str, asyncio.Task] = {}  # 保存后台任务引用
+        
+        # 性能设置 - User API 模式优化 + 安全限制
+        self.message_delay = config.get('message_delay', 0.1)  # 安全延迟: 0.1秒 (10条/秒)
+        self.batch_size = config.get('batch_size', 500)  # 安全批次: 500条消息
+        self.retry_attempts = config.get('retry_attempts', 3)  # 安全重试: 3次
+        self.retry_delay = config.get('retry_delay', 1.0)  # 安全重试延迟: 1秒
+        self.max_concurrent_tasks = config.get('max_concurrent_tasks', 10)  # 安全并发: 10个任务
+        self.max_concurrent_channels = config.get('max_concurrent_channels', 5)  # 安全频道并发: 5个
+        
+        # 媒体组安全设置
+        self.media_group_sequential = True  # 媒体组必须顺序处理
+        self.media_group_delay = 0.5  # 媒体组间延迟0.5秒
+        
+        # 随机延迟设置（避免规律性操作）
+        self.random_delay_range = (0.05, 0.15)  # 随机延迟范围：0.05-0.15秒
         
         # 进度回调
         self.progress_callback: Optional[Callable] = None
+    
+    async def _cleanup_message_cache(self):
+        """清理消息缓存，释放内存"""
+        try:
+            current_time = time.time()
+            if current_time - self.last_cache_cleanup < self.cache_cleanup_interval:
+                return
+            
+            # 清理过期缓存
+            cache_keys_to_remove = []
+            for key, (message, timestamp) in self.message_cache.items():
+                if current_time - timestamp > 300:  # 5分钟过期
+                    cache_keys_to_remove.append(key)
+            
+            for key in cache_keys_to_remove:
+                del self.message_cache[key]
+            
+            # 如果缓存仍然过大，清理最旧的条目
+            if len(self.message_cache) > self.max_memory_messages:
+                sorted_items = sorted(self.message_cache.items(), key=lambda x: x[1][1])
+                items_to_remove = len(self.message_cache) - self.max_memory_messages
+                for key, _ in sorted_items[:items_to_remove]:
+                    del self.message_cache[key]
+            
+            self.last_cache_cleanup = current_time
+            logger.info(f"🧹 缓存清理完成，当前缓存大小: {len(self.message_cache)}")
+            
+        except Exception as e:
+            logger.warning(f"缓存清理失败: {e}")
+    
+    async def _check_api_rate_limit(self) -> bool:
+        """检查API调用频率限制"""
+        try:
+            current_time = time.time()
+            
+            # 清理过期的API调用记录
+            self.api_call_times = [t for t in self.api_call_times if current_time - t < self.api_call_window]
+            
+            # 检查是否超过限制
+            if len(self.api_call_times) >= self.max_api_calls_per_window:
+                # 计算需要等待的时间
+                oldest_call = min(self.api_call_times)
+                wait_time = self.api_call_window - (current_time - oldest_call)
+                
+                if wait_time > 0:
+                    logger.warning(f"⚠️ API调用频率过高，需要等待 {wait_time:.1f} 秒")
+                    await asyncio.sleep(wait_time)
+                    return False
+            
+            # 记录当前API调用
+            self.api_call_times.append(current_time)
+            self.api_call_count += 1
+            
+            # 定期警告
+            if current_time - self.last_rate_limit_warning > 300:  # 5分钟警告一次
+                current_rate = len(self.api_call_times) / self.api_call_window
+                if current_rate > self.max_api_calls_per_window * 0.8:  # 超过80%时警告
+                    logger.warning(f"⚠️ API调用频率较高: {current_rate:.1f} 次/秒")
+                    self.last_rate_limit_warning = current_time
+            
+            return True
+            
+        except Exception as e:
+            logger.warning(f"API限流检查失败: {e}")
+            return True
+    
+    async def _apply_safe_delay(self):
+        """应用安全延迟（基础延迟 + 随机延迟）"""
+        try:
+            import random
+            # 基础延迟
+            base_delay = self.message_delay
+            # 随机延迟
+            random_delay = random.uniform(*self.random_delay_range)
+            # 总延迟
+            total_delay = base_delay + random_delay
+            
+            logger.debug(f"⏳ 应用安全延迟: {total_delay:.3f}秒 (基础: {base_delay:.3f}s + 随机: {random_delay:.3f}s)")
+            await asyncio.sleep(total_delay)
+            
+        except Exception as e:
+            logger.warning(f"应用安全延迟失败: {e}")
+            await asyncio.sleep(self.message_delay)  # 降级到基础延迟
+        self.api_call_window = 60  # 时间窗口（秒）
+        self.max_api_calls_per_window = 600  # 每窗口最大调用次数（10条/秒）
+        self.api_call_times = []  # API调用时间记录
+        self.last_rate_limit_warning = 0  # 上次限流警告时间
     
     async def get_effective_config_for_pair(self, user_id: str, pair_id: str) -> Dict[str, Any]:
         """获取频道组的有效配置（优先使用独立配置，否则使用全局配置）"""
@@ -139,23 +242,39 @@ class CloningEngine:
                 user_config = await get_user_config(user_id)
             
             # 检查是否有频道组独立过滤配置
-            channel_filters = user_config.get('channel_filters', {}).get(pair_id, {})
-            independent_enabled = channel_filters.get('independent_enabled', False)
+            # 如果是频道管理的虚拟pair_id，从admin_channel_filters获取配置
+            if pair_id.startswith('admin_test_'):
+                channel_id = pair_id.replace('admin_test_', '')
+                channel_filters = user_config.get('admin_channel_filters', {}).get(channel_id, {})
+                independent_enabled = channel_filters.get('independent_enabled', False)
+            else:
+                channel_filters = user_config.get('channel_filters', {}).get(pair_id, {})
+                independent_enabled = channel_filters.get('independent_enabled', False)
             
-            # 添加详细的调试信息
-            logger.info(f"频道组 {pair_id} 配置检查:")
-            logger.info(f"  • 用户配置中的channel_filters: {list(user_config.get('channel_filters', {}).keys())}")
-            logger.info(f"  • 当前频道组配置: {channel_filters}")
-            logger.info(f"  • independent_enabled: {independent_enabled}")
-            logger.info(f"  • 全局tail_text: '{user_config.get('tail_text', '')}'")
-            logger.info(f"  • 频道组tail_text: '{channel_filters.get('tail_text', '')}'")
-            logger.info(f"  • 频道组tail_frequency: {channel_filters.get('tail_frequency', 'not_set')}")
-            logger.info(f"  • 频道组tail_position: {channel_filters.get('tail_position', 'not_set')}")
+            # 获取频道名字用于显示
+            channel_name = "未知频道"
+            if pair_id.startswith("admin_test_"):
+                channel_id = pair_id.replace("admin_test_", "")
+                # 尝试从配置中获取频道名字
+                channel_name = f"频道({channel_id})"
+            
+            # 频道名字将在后续的调用中通过其他方式传递
+            
+            # 添加详细的调试信息（仅在DEBUG模式下显示）
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"频道组 {channel_name} 配置检查:")
+                logger.debug(f"  • 用户配置中的channel_filters: {list(user_config.get('channel_filters', {}).keys())}")
+                logger.debug(f"  • 当前频道组配置: {channel_filters}")
+                logger.debug(f"  • independent_enabled: {independent_enabled}")
+                logger.debug(f"  • 全局tail_text: '{user_config.get('tail_text', '')}'")
+                logger.debug(f"  • 频道组tail_text: '{channel_filters.get('tail_text', '')}'")
+                logger.debug(f"  • 频道组tail_frequency: {channel_filters.get('tail_frequency', 'not_set')}")
+                logger.debug(f"  • 频道组tail_position: {channel_filters.get('tail_position', 'not_set')}")
             
             if independent_enabled:
                 # 使用频道组独立配置
-                logger.info(f"频道组 {pair_id} 使用独立过滤配置")
-                logger.info(f"频道组 {pair_id} 原始配置: {channel_filters}")
+                logger.debug(f"频道组 {channel_name} 使用独立过滤配置")
+                logger.debug(f"频道组 {channel_name} 原始配置: {channel_filters}")
                 effective_config = {
                     # 关键字过滤 - 只有在启用时才设置
                     'filter_keywords': channel_filters.get('keywords', []) if channel_filters.get('keywords_enabled', False) else [],
@@ -168,10 +287,10 @@ class CloningEngine:
                     'content_removal_mode': channel_filters.get('content_removal_mode', 'text_only'),
                     
                     # 链接移除 - 映射到增强链接过滤
-                    'remove_links': False,  # 禁用普通链接过滤
-                    'remove_magnet_links': False,  # 禁用磁力链接过滤
-                    'remove_all_links': False,  # 禁用所有链接过滤
-                    'remove_links_mode': 'links_only',
+                    'remove_links': channel_filters.get('remove_links', channel_filters.get('links_removal', False)),
+                    'remove_magnet_links': channel_filters.get('remove_magnet_links', False),
+                    'remove_all_links': channel_filters.get('remove_all_links', False),
+                    'remove_links_mode': channel_filters.get('remove_links_mode', 'links_only'),
                     
                     # 增强过滤 - 独立的增强过滤设置
                     'enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled', channel_filters.get('links_removal', False)),
@@ -182,11 +301,11 @@ class CloningEngine:
                     '_debug_links_removal': channel_filters.get('links_removal'),
                     
                     # 用户名移除
-                    'remove_usernames': channel_filters.get('usernames_removal', False),
+                    'remove_usernames': channel_filters.get('remove_usernames', channel_filters.get('usernames_removal', False)),
                     
                     # 按钮移除
-                    'filter_buttons': channel_filters.get('buttons_removal', False),
-                    'button_filter_mode': channel_filters.get('buttons_removal_mode', 'remove_all'),
+                    'filter_buttons': channel_filters.get('filter_buttons', channel_filters.get('buttons_removal', False)),
+                    'button_filter_mode': channel_filters.get('buttons_removal_mode', channel_filters.get('button_filter_mode', 'remove_buttons_only')),
                     
                     # 小尾巴和附加按钮
                     'tail_text': channel_filters.get('tail_text', ''),
@@ -203,27 +322,28 @@ class CloningEngine:
                     # 评论搬运配置已移除
                 }
                 
-                # 添加调试信息
-                logger.info(f"频道组 {pair_id} 映射后的配置:")
-                logger.info(f"  • filter_keywords: {effective_config['filter_keywords']}")
-                logger.info(f"  • content_removal: {effective_config['content_removal']}")
-                logger.info(f"  • remove_links: {effective_config['remove_links']}")
-                logger.info(f"  • remove_usernames: {effective_config['remove_usernames']}")
-                logger.info(f"  • filter_buttons: {effective_config['filter_buttons']}")
-                logger.info(f"  • enhanced_filter_enabled: {effective_config['enhanced_filter_enabled']}")
-                logger.info(f"  • enhanced_filter_mode: {effective_config['enhanced_filter_mode']}")
-                logger.info(f"  • tail_text: '{effective_config['tail_text']}'")
-                logger.info(f"  • tail_frequency: {effective_config['tail_frequency']}")
-                logger.info(f"  • tail_position: {effective_config['tail_position']}")
-                logger.info(f"  • additional_buttons: {effective_config['additional_buttons']}")
-                
-                # 添加原始频道组配置调试
-                logger.info(f"频道组 {pair_id} 原始配置:")
-                logger.info(f"  • channel_filters: {channel_filters}")
-                logger.info(f"  • 是否使用频道组配置: {pair_id in user_config.get('channel_filters', {})}")
+                # 添加调试信息（仅在DEBUG模式下显示）
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"频道组 {channel_name} 映射后的配置:")
+                    logger.debug(f"  • filter_keywords: {effective_config['filter_keywords']}")
+                    logger.debug(f"  • content_removal: {effective_config['content_removal']}")
+                    logger.debug(f"  • remove_links: {effective_config['remove_links']}")
+                    logger.debug(f"  • remove_usernames: {effective_config['remove_usernames']}")
+                    logger.debug(f"  • filter_buttons: {effective_config['filter_buttons']}")
+                    logger.debug(f"  • enhanced_filter_enabled: {effective_config['enhanced_filter_enabled']}")
+                    logger.debug(f"  • enhanced_filter_mode: {effective_config['enhanced_filter_mode']}")
+                    logger.debug(f"  • tail_text: '{effective_config['tail_text']}'")
+                    logger.debug(f"  • tail_frequency: {effective_config['tail_frequency']}")
+                    logger.debug(f"  • tail_position: {effective_config['tail_position']}")
+                    logger.debug(f"  • additional_buttons: {effective_config['additional_buttons']}")
+                    
+                    # 添加原始频道组配置调试
+                    logger.debug(f"频道组 {channel_name} 原始配置:")
+                    logger.debug(f"  • channel_filters: {channel_filters}")
+                    logger.debug(f"  • 是否使用频道组配置: {pair_id in user_config.get('channel_filters', {})}")
             else:
                 # 使用全局配置
-                logger.info(f"频道组 {pair_id} 使用全局过滤配置")
+                logger.debug(f"频道组 {channel_name} 使用全局过滤配置")
                 effective_config = {
                     'filter_keywords': user_config.get('filter_keywords', []) if user_config.get('keywords_enabled', False) else [],
                     'replacement_words': user_config.get('replacement_words', {}) if user_config.get('replacements_enabled', False) else {},
@@ -276,16 +396,18 @@ class CloningEngine:
     async def create_task(self, source_chat_id: str, target_chat_id: str,
                          start_id: Optional[int] = None, end_id: Optional[int] = None,
                          config: Optional[Dict[str, Any]] = None,
-                         source_username: str = "", target_username: str = "") -> CloneTask:
+                         source_username: str = "", target_username: str = "",
+                         task_id: Optional[str] = None) -> CloneTask:
         """创建新的搬运任务"""
-        task_id = f"clone_{int(time.time())}_{len(self.active_tasks)}"
+        if task_id is None:
+            task_id = f"clone_{int(time.time())}_{len(self.active_tasks)}"
         
         try:
             # 添加超时保护的频道验证
-            logger.info(f"🔍 开始验证频道: {source_chat_id} -> {target_chat_id}")
+            logger.debug(f"🔍 开始验证频道: {source_chat_id} -> {target_chat_id}")
             validation_result = await asyncio.wait_for(
                 self._validate_channels(source_chat_id, target_chat_id, source_username, target_username),
-                timeout=30.0  # 30秒超时
+                timeout=60.0  # 增加到60秒超时
             )
             is_valid, validated_source_id, validated_target_id = validation_result
             if not is_valid:
@@ -300,12 +422,30 @@ class CloningEngine:
             # 使用验证成功的频道ID创建任务
             task = CloneTask(task_id, validated_source_id, validated_target_id, start_id, end_id, config)
             
-            # 添加超时保护的消息计数
-            logger.info(f"📊 开始计算消息数量: {validated_source_id}")
-            task.total_messages = await asyncio.wait_for(
-                self._count_messages(validated_source_id, start_id, end_id),
-                timeout=15.0  # 15秒超时
-            )
+            # 添加超时保护的消息计数，增加重试机制
+            logger.debug(f"📊 开始计算消息数量: {validated_source_id}")
+            retry_count = 0
+            max_retries = 3
+            while retry_count < max_retries:
+                try:
+                    task.total_messages = await asyncio.wait_for(
+                        self._count_messages(validated_source_id, start_id, end_id),
+                        timeout=120.0  # 增加到120秒超时
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = retry_count * 2  # 递增延迟
+                        logger.warning(f"⚠️ 消息计数超时，{wait_time}秒后重试 ({retry_count}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"❌ 消息计数失败，已达到最大重试次数")
+                        task.total_messages = 1000  # 使用默认值
+                except Exception as e:
+                    logger.error(f"❌ 消息计数异常: {e}")
+                    task.total_messages = 1000  # 使用默认值
+                    break
             task.stats['total_messages'] = task.total_messages
             logger.info(f"✅ 消息计数完成: {task.total_messages} 条")
             
@@ -450,10 +590,12 @@ class CloningEngine:
             logger.error(f"频道验证失败: {e}")
             return False, source_chat_id, target_chat_id
     
-    def _resolve_pending_channel_id(self, channel_id: str) -> str:
+    def _resolve_pending_channel_id(self, channel_id) -> str:
         """解析PENDING格式的频道ID，转换为实际可用的频道ID"""
-        if not isinstance(channel_id, str) or not channel_id.startswith('PENDING_'):
-            return channel_id
+        # 确保channel_id是字符串
+        channel_id_str = str(channel_id)
+        if not channel_id_str.startswith('PENDING_'):
+            return channel_id_str
         
         # 移除PENDING_前缀
         pending_part = channel_id.replace('PENDING_', '')
@@ -610,18 +752,37 @@ class CloningEngine:
             else:
                 # 从最近消息开始，尝试获取实际消息数量
                 try:
-                    # 获取最近的一些消息来估算
-                    recent_messages = await self.client.get_messages(chat_id, 500)
-                    if recent_messages:
-                        # 根据最近消息的ID范围估算
-                        latest_id = max(msg.id for msg in recent_messages if msg and msg.id)
-                        oldest_id = min(msg.id for msg in recent_messages if msg and msg.id)
-                        estimated_count = latest_id - oldest_id + 1
-                        # 限制在合理范围内
-                        return min(max(estimated_count, 100), 10000)
-                    else:
-                        # 如果无法获取消息，使用默认值
-                        return 1000
+                    # 获取最近的一些消息来估算，添加重试机制
+                    retry_count = 0
+                    max_retries = 3
+                    while retry_count < max_retries:
+                        try:
+                            recent_messages = await asyncio.wait_for(
+                                self.client.get_messages(chat_id, 500),
+                                timeout=30.0  # 30秒超时
+                            )
+                            if recent_messages:
+                                # 根据最近消息的ID范围估算
+                                latest_id = max(msg.id for msg in recent_messages if msg and msg.id)
+                                oldest_id = min(msg.id for msg in recent_messages if msg and msg.id)
+                                estimated_count = latest_id - oldest_id + 1
+                                # 限制在合理范围内
+                                return min(max(estimated_count, 100), 10000)
+                            else:
+                                # 如果无法获取消息，使用默认值
+                                return 1000
+                        except asyncio.TimeoutError:
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                wait_time = retry_count * 2
+                                logger.warning(f"⚠️ 获取消息超时，{wait_time}秒后重试 ({retry_count}/{max_retries})")
+                                await asyncio.sleep(wait_time)
+                            else:
+                                logger.error(f"❌ 获取消息失败，已达到最大重试次数")
+                                return 1000
+                        except Exception as e:
+                            logger.error(f"❌ 获取消息异常: {e}")
+                            return 1000
                 except Exception as e:
                     logger.warning(f"无法获取最近消息: {e}")
                     # 回退到频道成员数估算
@@ -665,10 +826,10 @@ class CloningEngine:
                     user_config = await self.data_manager.get_user_config(user_id)
                 else:
                     user_config = await get_user_config(user_id)
-                max_user_concurrent = user_config.get('max_user_concurrent_tasks', 20)
+                max_user_concurrent = user_config.get('max_user_concurrent_tasks', 50)
                 logger.info(f"🔧 [DEBUG] 用户配置获取成功，最大并发数: {max_user_concurrent}")
             except Exception as e:
-                max_user_concurrent = 20  # 默认支持20个并发任务
+                max_user_concurrent = 50  # 默认支持50个并发任务
                 logger.info(f"🔧 [DEBUG] 用户配置获取失败，使用默认值: {max_user_concurrent}, 错误: {e}")
             
             user_active_tasks = [t for t in self.active_tasks.values() if t.config.get('user_id') == user_id]
@@ -691,6 +852,7 @@ class CloningEngine:
             # 异步启动搬运任务，不等待完成
             logger.info(f"🔧 [DEBUG] 创建后台执行任务: {task.task_id}")
             background_task = asyncio.create_task(self._execute_cloning_background(task))
+            self.background_tasks[task.task_id] = background_task  # 保存后台任务引用
             logger.info(f"🔧 [DEBUG] 后台任务已创建: {task.task_id}, task_obj={background_task}")
             
             logger.info(f"🔧 [DEBUG] 搬运任务启动完成: {task.task_id}")
@@ -743,15 +905,15 @@ class CloningEngine:
             # 执行搬运，添加超时保护
             logger.info(f"🔧 [DEBUG] 准备调用_execute_cloning: {task.task_id}")
             try:
-                timeout_value = task.config.get('task_timeout', 3600)
+                timeout_value = task.config.get('task_timeout', 86400)
                 logger.info(f"🔧 [DEBUG] 设置超时时间: {timeout_value}秒, 任务: {task.task_id}")
                 success = await asyncio.wait_for(
                     self._execute_cloning(task), 
-                    timeout=timeout_value  # 默认1小时超时
+                    timeout=timeout_value  # 默认24小时超时
                 )
                 logger.info(f"🔧 [DEBUG] _execute_cloning完成，结果: {success}, 任务: {task.task_id}")
             except asyncio.TimeoutError:
-                logger.error(f"❌ 任务执行超时（{task.config.get('task_timeout', 3600)}秒），停止处理")
+                logger.error(f"❌ 任务执行超时（{task.config.get('task_timeout', 86400)}秒），停止处理")
                 success = False
             
             if success:
@@ -783,17 +945,26 @@ class CloningEngine:
             if task.task_id in self.active_tasks:
                 del self.active_tasks[task.task_id]
             
+            # 清理后台任务引用
+            if task.task_id in self.background_tasks:
+                del self.background_tasks[task.task_id]
+            
             logger.info(f"搬运任务结束: {task.task_id}, 状态: {task.status}")
             
         except Exception as e:
             logger.error(f"后台执行搬运任务失败: {e}")
             task.status = "failed"
             task.end_time = datetime.now()
+            
+            # 清理后台任务引用
+            if task.task_id in self.background_tasks:
+                del self.background_tasks[task.task_id]
     
     async def _execute_cloning(self, task: CloneTask) -> bool:
         """执行搬运逻辑（改为流式处理，支持断点续传）"""
         try:
             logger.info(f"🔧 [DEBUG] 进入_execute_cloning方法: {task.task_id}")
+            logger.info(f"🔧 使用客户端类型: {self.client_type}")
             # 添加超时保护
             task_start_time = time.time()
             logger.info(f"🔧 [DEBUG] 记录任务开始时间: {task_start_time}, 任务: {task.task_id}")
@@ -802,7 +973,7 @@ class CloningEngine:
                 task.start_time = datetime.now()
                 logger.info(f"🔧 [DEBUG] 设置任务开始时间: {task.start_time}, 任务: {task.task_id}")
             # 从配置中获取超时时间，如果没有配置则使用默认值
-            max_execution_time = task.config.get('task_timeout', 7200)  # 默认1小时
+            max_execution_time = task.config.get('task_timeout', 86400)  # 默认24小时
             logger.info(f"🔧 [DEBUG] 设置最大执行时间: {max_execution_time}秒, 任务: {task.task_id}")
             
             # 检查是否为断点续传
@@ -821,11 +992,11 @@ class CloningEngine:
                 logger.info(f"🔧 [DEBUG] 调用_get_first_batch，参数: source_chat_id={task.source_chat_id}, start_id={actual_start_id}, end_id={task.end_id}, 任务: {task.task_id}")
                 first_batch = await asyncio.wait_for(
                     self._get_first_batch(task.source_chat_id, actual_start_id, task.end_id),
-                    timeout=30.0  # 30秒超时
+                    timeout=180.0  # 增加到180秒超时
                 )
                 logger.info(f"🔧 [DEBUG] _get_first_batch完成，获得{len(first_batch) if first_batch else 0}条消息，任务: {task.task_id}")
             except asyncio.TimeoutError:
-                logger.error(f"获取第一批消息超时（30秒），任务: {task.task_id}")
+                logger.error(f"获取第一批消息超时（180秒），任务: {task.task_id}")
                 return False
             
             if not first_batch:
@@ -838,7 +1009,7 @@ class CloningEngine:
             else:
                 task.total_messages = len(first_batch)
             
-            logger.info(f"📊 第一批获取完成，共 {len(first_batch)} 条消息，预计总消息数: {task.total_messages}")
+            logger.debug(f"📊 第一批获取完成，共 {len(first_batch)} 条消息，预计总消息数: {task.total_messages}")
             logger.info(f"🚀 立即开始搬运第一批消息")
             
             # 立即开始搬运第一批
@@ -880,15 +1051,21 @@ class CloningEngine:
             
             if remaining_start > end_id:
                 logger.info("没有剩余消息需要搬运")
+                logger.info(f"✅ 任务 {task.task_id} 已完成所有消息处理")
                 return True
             
             logger.info(f"🔄 开始流式处理剩余消息: {remaining_start} - {end_id}")
             
-            # 流式处理：边获取边搬运，支持预取和动态批次调整
-            batch_size = 500  # 初始批次大小
-            min_batch_size = 200  # 最小批次大小
-            max_batch_size = 1000  # 最大批次大小
+            # 流式处理：边获取边搬运，支持预取和动态批次调整 - User API 优化
+            batch_size = 1000  # User API: 增加初始批次大小到1000
+            min_batch_size = 500  # User API: 增加最小批次大小到500
+            max_batch_size = 2000  # User API: 增加最大批次大小到2000
             current_id = remaining_start
+            
+            # 预取缓存设置
+            prefetch_size = 2000  # 预取2000条消息
+            cache_size = 5000  # 缓存5000条消息
+            prefetch_tasks = []  # 预取任务列表
             processed_batches = 0
             next_batch_task = None  # 预取任务
             batch_times = []  # 记录批次处理时间用于动态调整
@@ -934,11 +1111,37 @@ class CloningEngine:
                     
                     # 检查媒体组完整性
                     last_message = valid_messages[-1]
+                    first_message = valid_messages[0]
+                    
+                    # 检查是否需要扩展媒体组
+                    need_extension = False
+                    extended_batch_end = batch_end
+                    
+                    # 如果最后一个消息是媒体组，需要向后扩展
                     if last_message.media_group_id:
                         extended_batch_end = await self._extend_batch_to_complete_media_group(
                             task.source_chat_id, batch_end, end_id
                         )
-                        
+                        if extended_batch_end > batch_end:
+                            need_extension = True
+                    
+                    # 如果第一个消息是媒体组，需要向前扩展
+                    if first_message.media_group_id:
+                        extended_batch_start = await self._extend_batch_to_complete_media_group(
+                            task.source_chat_id, current_id, end_id
+                        )
+                        if extended_batch_start < current_id:
+                            # 需要获取前面的消息
+                            extended_messages = await self.client.get_messages(
+                                task.source_chat_id,
+                                message_ids=list(range(extended_batch_start, current_id))
+                            )
+                            extended_valid = [msg for msg in extended_messages if msg is not None]
+                            valid_messages = extended_valid + valid_messages
+                            current_id = extended_batch_start
+                            need_extension = True
+                    
+                    if need_extension:
                         if extended_batch_end > batch_end:
                             extended_messages = await self.client.get_messages(
                                 task.source_chat_id,
@@ -947,9 +1150,7 @@ class CloningEngine:
                             extended_valid = [msg for msg in extended_messages if msg is not None]
                             valid_messages.extend(extended_valid)
                             batch_end = extended_batch_end
-                            logger.info(f"📦 媒体组扩展批次: {current_id} - {batch_end}, 消息数: {len(valid_messages)}")
-                        else:
-                            logger.info(f"📦 标准批次: {current_id} - {batch_end}, 消息数: {len(valid_messages)}")
+                        logger.info(f"📦 媒体组扩展批次: {current_id} - {batch_end}, 消息数: {len(valid_messages)}")
                     else:
                         logger.info(f"📦 标准批次: {current_id} - {batch_end}, 消息数: {len(valid_messages)}")
                     
@@ -1042,13 +1243,22 @@ class CloningEngine:
                         batch_end = min(current_id + batch_size - 1, end_id)
                         
                         # 获取当前批次的消息
+                        message_ids = list(range(current_id, batch_end + 1))
+                        logger.info(f"🔍 尝试获取消息ID: {message_ids[:10]}{'...' if len(message_ids) > 10 else ''}")
+                        
                         batch_messages = await self.client.get_messages(
                             chat_id, 
-                            message_ids=list(range(current_id, batch_end + 1))
+                            message_ids=message_ids
                         )
+                        
+                        logger.info(f"🔍 get_messages返回结果: {type(batch_messages)}, 长度: {len(batch_messages) if batch_messages else 'None'}")
+                        if batch_messages:
+                            logger.info(f"🔍 前5个消息类型: {[type(msg).__name__ if msg else 'None' for msg in batch_messages[:5]]}")
+                            logger.info(f"🔍 None值数量: {sum(1 for msg in batch_messages if msg is None)}")
                         
                         # 过滤掉None值（不存在的消息）
                         valid_messages = [msg for msg in batch_messages if msg is not None]
+                        logger.info(f"🔍 有效消息数量: {len(valid_messages)}")
                         
                         if not valid_messages:
                             current_id = batch_end + 1
@@ -1118,7 +1328,7 @@ class CloningEngine:
                         try:
                             min_id = min(msg.id for msg in messages if hasattr(msg, 'id') and msg.id is not None)
                             max_id = max(msg.id for msg in messages if hasattr(msg, 'id') and msg.id is not None)
-                            logger.info(f"📊 消息ID范围: {min_id} - {max_id}")
+                            logger.debug(f"📊 消息ID范围: {min_id} - {max_id}")
                         except (ValueError, TypeError) as e:
                             logger.warning(f"无法获取消息ID范围: {e}")
                         
@@ -1205,7 +1415,7 @@ class CloningEngine:
             # 检查任务是否超时（防止无限期卡住）
             if hasattr(task, 'start_time') and task.start_time:
                 elapsed_time = (datetime.now() - task.start_time).total_seconds()
-                max_task_time = task.config.get('max_task_time', 3600)  # 默认1小时
+                max_task_time = task.config.get('max_task_time', DEFAULT_USER_CONFIG.get('max_task_time', 172800))  # 从配置读取，默认48小时
                 if elapsed_time > max_task_time:
                     logger.warning(f"⚠️ 任务 {task.task_id} 运行时间过长 ({elapsed_time:.1f}秒 > {max_task_time}秒)，停止处理")
                     task.status = "timeout"
@@ -1221,9 +1431,9 @@ class CloningEngine:
                 effective_config = await self.get_effective_config_for_pair(user_id, pair_id)
                 logger.debug(f"媒体组使用频道组 {pair_id} (索引{pair_index}) 的过滤配置")
             else:
-                # 使用默认配置
-                effective_config = self.config
-                logger.debug("媒体组使用默认过滤配置")
+                # 使用任务配置或默认配置
+                effective_config = task.config if task.config else self.config
+                logger.debug("媒体组使用任务配置或默认过滤配置")
             
             # 使用消息引擎处理媒体组，传递频道组配置
             processed_result, should_skip = self.message_engine.process_media_group(messages, effective_config)
@@ -1280,9 +1490,9 @@ class CloningEngine:
                 effective_config = await self.get_effective_config_for_pair(user_id, pair_id)
                 logger.debug(f"使用频道组 {pair_id} (索引{pair_index}) 的过滤配置")
             else:
-                # 使用默认配置
-                effective_config = self.config
-                logger.debug("使用默认过滤配置")
+                # 使用任务配置或默认配置
+                effective_config = task.config if task.config else self.config
+                logger.debug("使用任务配置或默认过滤配置")
             
             # 使用消息引擎处理，传递频道组配置
             processed_result, should_skip = self.message_engine.process_message(message, effective_config)
@@ -1301,10 +1511,12 @@ class CloningEngine:
             
             # 检查处理结果是否有效
             if isinstance(processed_result, dict):
+                # 对于媒体消息，即使文本为空也应该被认为是有效内容
                 has_content = (
                     processed_result.get('text', '').strip() or 
                     processed_result.get('caption', '').strip() or 
-                    processed_result.get('media', False)
+                    processed_result.get('media', False) or
+                    message.media  # 原始消息包含媒体内容
                 )
                 if not has_content:
                     logger.warning(f"消息处理结果无有效内容: {message.id}")
@@ -1360,7 +1572,7 @@ class CloningEngine:
                     logger.warning(f"⚠️ 发送 {message_type} {message_id} 失败 (尝试 {attempt + 1}/{self.retry_attempts}): {e}")
                     
                     if attempt < self.retry_attempts - 1:
-                        logger.info(f"⏳ 等待 {self.retry_delay} 秒后重试...")
+                        logger.debug(f"⏳ 等待 {self.retry_delay} 秒后重试...")
                         await asyncio.sleep(self.retry_delay)
             
             logger.error(f"❌ {message_type} {message_id} 发送失败，已达到最大重试次数")
@@ -1417,18 +1629,18 @@ class CloningEngine:
             logger.info(f"📱 开始发送媒体组 {media_group_id} ({len(messages)} 条消息)")
             
             # 构建媒体组
-            logger.info(f"🔧 开始构建媒体组 {media_group_id}")
-            logger.info(f"🔍 媒体组构建详情:")
-            logger.info(f"  • 消息数量: {len(messages)}")
-            logger.info(f"  • 处理结果: {processed_result}")
+            logger.debug(f"🔧 开始构建媒体组 {media_group_id}")
+            logger.debug(f"🔍 媒体组构建详情:")
+            logger.debug(f"  • 消息数量: {len(messages)}")
+            logger.debug(f"  • 处理结果: {processed_result}")
             
             media_list = []
             caption = processed_result.get('caption', '')
             buttons = processed_result.get('buttons')
             
-            logger.info(f"🔍 媒体组内容:")
-            logger.info(f"  • Caption: '{caption[:100]}...' (长度: {len(caption)})")
-            logger.info(f"  • 按钮: {bool(buttons)}")
+            logger.debug(f"🔍 媒体组内容:")
+            logger.debug(f"  • Caption: '{caption[:50]}...' (长度: {len(caption)})")
+            logger.debug(f"  • 按钮: {bool(buttons)}")
             
             # 统计媒体类型
             photo_count = 0
@@ -1437,63 +1649,63 @@ class CloningEngine:
             
             for i, message in enumerate(messages):
                 try:
-                    logger.info(f"🔍 处理媒体组消息 {i+1}/{len(messages)}: ID={message.id}")
-                    logger.info(f"  • 消息类型: photo={bool(message.photo)}, video={bool(message.video)}, document={bool(message.document)}")
+                    logger.debug(f"🔍 处理媒体组消息 {i+1}/{len(messages)}: ID={message.id}")
+                    logger.debug(f"  • 消息类型: photo={bool(message.photo)}, video={bool(message.video)}, document={bool(message.document)}")
                     
                     if message.photo:
                         # 图片
-                        logger.info(f"  • 处理照片: file_id={message.photo.file_id}")
+                        logger.debug(f"  • 处理照片: file_id={message.photo.file_id}")
                         media_item = InputMediaPhoto(
                             media=message.photo.file_id,
                             caption=caption if i == 0 else None  # 只在第一个媒体上添加caption
                         )
                         media_list.append(media_item)
                         photo_count += 1
-                        logger.info(f"   📷 添加照片 {i+1}/{len(messages)}")
+                        logger.debug(f"   📷 添加照片 {i+1}/{len(messages)}")
                         
                     elif message.video:
                         # 视频
-                        logger.info(f"  • 处理视频: file_id={message.video.file_id}")
+                        logger.debug(f"  • 处理视频: file_id={message.video.file_id}")
                         media_item = InputMediaVideo(
                             media=message.video.file_id,
                             caption=caption if i == 0 else None  # 只在第一个媒体上添加caption
                         )
                         media_list.append(media_item)
                         video_count += 1
-                        logger.info(f"   🎥 添加视频 {i+1}/{len(messages)}")
+                        logger.debug(f"   🎥 添加视频 {i+1}/{len(messages)}")
                         
                     elif message.document and message.document.mime_type and 'video' in message.document.mime_type:
                         # 文档视频
-                        logger.info(f"  • 处理文档视频: file_id={message.document.file_id}, mime_type={message.document.mime_type}")
+                        logger.debug(f"  • 处理文档视频: file_id={message.document.file_id}, mime_type={message.document.mime_type}")
                         media_item = InputMediaVideo(
                             media=message.document.file_id,
                             caption=caption if i == 0 else None
                         )
                         media_list.append(media_item)
                         video_count += 1
-                        logger.info(f"   📄🎥 添加文档视频 {i+1}/{len(messages)}")
+                        logger.debug(f"   📄🎥 添加文档视频 {i+1}/{len(messages)}")
                         
                     elif message.document and message.document.mime_type and 'image' in message.document.mime_type:
                         # 文档图片
-                        logger.info(f"  • 处理文档图片: file_id={message.document.file_id}, mime_type={message.document.mime_type}")
+                        logger.debug(f"  • 处理文档图片: file_id={message.document.file_id}, mime_type={message.document.mime_type}")
                         media_item = InputMediaPhoto(
                             media=message.document.file_id,
                             caption=caption if i == 0 else None
                         )
                         media_list.append(media_item)
                         photo_count += 1
-                        logger.info(f"   📄📷 添加文档图片 {i+1}/{len(messages)}")
+                        logger.debug(f"   📄📷 添加文档图片 {i+1}/{len(messages)}")
                         
                     else:
                         logger.warning(f"   ⚠️ 消息 {message.id} 不是媒体类型")
-                        logger.warning(f"  • 详细信息: photo={message.photo}, video={message.video}, document={message.document}")
+                        logger.debug(f"  • 详细信息: photo={message.photo}, video={message.video}, document={message.document}")
                         if message.document:
-                            logger.warning(f"  • 文档MIME类型: {message.document.mime_type}")
+                            logger.debug(f"  • 文档MIME类型: {message.document.mime_type}")
                         
                 except Exception as e:
                     logger.warning(f"   ⚠️ 处理媒体组消息失败 {message.id}: {e}")
-                    logger.warning(f"  • 错误类型: {type(e).__name__}")
-                    logger.warning(f"  • 错误详情: {str(e)}")
+                    logger.debug(f"  • 错误类型: {type(e).__name__}")
+                    logger.debug(f"  • 错误详情: {str(e)}")
                     continue
             
             if not media_list:
@@ -1513,12 +1725,17 @@ class CloningEngine:
             
             # 发送媒体组（添加超时保护和重试机制）
             logger.info(f"📤 正在发送媒体组 {media_group_id}...")
-            logger.info(f"🔍 媒体组发送详情:")
-            logger.info(f"  • 目标频道ID: {task.target_chat_id}")
-            logger.info(f"  • 媒体数量: {len(media_list)}")
-            logger.info(f"  • 任务ID: {task.task_id}")
-            logger.info(f"  • 任务状态: {task.status}")
-            logger.info(f"  • 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.debug(f"🔍 媒体组发送详情:")
+            logger.debug(f"  • 目标频道ID: {task.target_chat_id}")
+            logger.debug(f"  • 媒体数量: {len(media_list)}")
+            logger.debug(f"  • 任务ID: {task.task_id}")
+            logger.debug(f"  • 任务状态: {task.status}")
+            logger.debug(f"  • 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # API限流检查
+            if not await self._check_api_rate_limit():
+                logger.warning(f"⚠️ API限流，跳过媒体组 {media_group_id}")
+                return False
             
             # 重试机制
             max_retries = 3
@@ -1526,11 +1743,11 @@ class CloningEngine:
             
             for attempt in range(max_retries):
                 try:
-                    logger.info(f"🔄 开始发送尝试 {attempt + 1}/{max_retries}")
-                    logger.info(f"🔍 发送前检查:")
-                    logger.info(f"  • 任务状态: {task.status}")
-                    logger.info(f"  • 是否应该停止: {task.should_stop()}")
-                    logger.info(f"  • 媒体列表长度: {len(media_list)}")
+                    logger.debug(f"🔄 开始发送尝试 {attempt + 1}/{max_retries}")
+                    logger.debug(f"🔍 发送前检查:")
+                    logger.debug(f"  • 任务状态: {task.status}")
+                    logger.debug(f"  • 是否应该停止: {task.should_stop()}")
+                    logger.debug(f"  • 媒体列表长度: {len(media_list)}")
                     
                     # 检查任务状态
                     if task.should_stop():
@@ -1538,7 +1755,7 @@ class CloningEngine:
                         return False
                     
                     # 添加超时保护（30秒超时）
-                    logger.info(f"⏰ 开始发送媒体组，设置30秒超时...")
+                    logger.debug(f"⏰ 开始发送媒体组，设置30秒超时...")
                     start_send_time = time.time()
                     
                     result = await asyncio.wait_for(
@@ -1551,17 +1768,17 @@ class CloningEngine:
                     
                     send_duration = time.time() - start_send_time
                     logger.info(f"✅ 媒体组 {media_group_id} 发送成功")
-                    logger.info(f"🔍 发送结果详情:")
-                    logger.info(f"  • 发送耗时: {send_duration:.2f}秒")
-                    logger.info(f"  • 返回结果类型: {type(result)}")
+                    logger.debug(f"🔍 发送结果详情:")
+                    logger.debug(f"  • 发送耗时: {send_duration:.2f}秒")
+                    logger.debug(f"  • 返回结果类型: {type(result)}")
                     if hasattr(result, '__len__'):
-                        logger.info(f"  • 返回消息数量: {len(result)}")
+                        logger.debug(f"  • 返回消息数量: {len(result)}")
                     break
                     
                 except asyncio.TimeoutError:
                     logger.warning(f"⚠️ 媒体组 {media_group_id} 发送超时 (尝试 {attempt + 1}/{max_retries})")
                     if attempt < max_retries - 1:
-                        logger.info(f"⏳ 等待 {retry_delay} 秒后重试...")
+                        logger.debug(f"⏳ 等待 {retry_delay} 秒后重试...")
                         await asyncio.sleep(retry_delay)
                         retry_delay *= 2  # 指数退避
                     else:
@@ -1573,8 +1790,23 @@ class CloningEngine:
                     wait_time = int(str(flood_error).split('A wait of ')[1].split(' seconds')[0])
                     logger.warning(f"⚠️ 遇到FloodWait限制，需要等待 {wait_time} 秒")
                     
+                    # 检查任务状态
+                    if task.should_stop():
+                        logger.info(f"⚠️ 任务 {task.task_id} 在FloodWait等待期间被{task.status}，停止处理")
+                        return False
+                    
+                    # 如果等待时间过长（超过1小时），记录警告并考虑暂停任务
+                    if wait_time > 3600:
+                        logger.warning(f"⚠️ FloodWait等待时间过长: {wait_time}秒 ({wait_time/3600:.1f}小时)")
+                        logger.warning(f"⚠️ 任务 {task.task_id} 可能需要很长时间才能继续")
+                        
+                        # 如果等待时间超过4小时，建议暂停任务
+                        if wait_time > 14400:  # 4小时
+                            logger.warning(f"⚠️ FloodWait等待时间过长（{wait_time/3600:.1f}小时），建议暂停任务")
+                            logger.warning(f"⚠️ 任务 {task.task_id} 将在等待完成后继续，但可能需要很长时间")
+                    
                     # 等待指定时间
-                    logger.info(f"⏳ 等待 {wait_time} 秒后重试...")
+                    logger.debug(f"⏳ 等待 {wait_time} 秒后重试...")
                     await asyncio.sleep(wait_time)
                     
                     # 重试发送
@@ -1596,7 +1828,7 @@ class CloningEngine:
                 except Exception as send_error:
                     logger.error(f"❌ 发送媒体组 {media_group_id} 失败 (尝试 {attempt + 1}/{max_retries}): {send_error}")
                     if attempt < max_retries - 1:
-                        logger.info(f"⏳ 等待 {retry_delay} 秒后重试...")
+                        logger.debug(f"⏳ 等待 {retry_delay} 秒后重试...")
                         await asyncio.sleep(retry_delay)
                         retry_delay *= 2
                     else:
@@ -1605,13 +1837,13 @@ class CloningEngine:
             
             # 如果有按钮，单独发送
             if buttons:
-                logger.info(f"🔘 发送媒体组 {media_group_id} 的附加按钮")
+                logger.debug(f"🔘 发送媒体组 {media_group_id} 的附加按钮")
                 await self.client.send_message(
                     chat_id=task.target_chat_id,
                     text="📎 媒体组附加按钮",
                     reply_markup=buttons
                 )
-                logger.info(f"✅ 媒体组 {media_group_id} 按钮发送成功")
+                logger.debug(f"✅ 媒体组 {media_group_id} 按钮发送成功")
             
             return True
             
@@ -1634,10 +1866,10 @@ class CloningEngine:
             buttons = processed_result.get('buttons')
             
             # 添加调试日志
-            logger.info(f"🔍 媒体消息发送: caption='{caption[:100]}...', buttons={bool(buttons)}")
-            logger.info(f"🔍 目标频道ID: {task.target_chat_id}")
-            logger.info(f"🔍 源消息ID: {message_id}")
-            logger.info(f"🔍 媒体类型: photo={bool(original_message.photo)}, video={bool(original_message.video)}, document={bool(original_message.document)}")
+            logger.debug(f"🔍 媒体消息发送: caption='{caption[:50]}...', buttons={bool(buttons)}")
+            logger.debug(f"🔍 目标频道ID: {task.target_chat_id}")
+            logger.debug(f"🔍 源消息ID: {message_id}")
+            logger.debug(f"🔍 媒体类型: photo={bool(original_message.photo)}, video={bool(original_message.video)}, document={bool(original_message.document)}")
             
             # 确定媒体类型
             if original_message.photo:
@@ -1704,24 +1936,41 @@ class CloningEngine:
                             return True
                             
                         else:
-                            # 其他类型的媒体，发送为文档
+                            # 其他类型的媒体，检查是否有可用的媒体
                             logger.info(f"📎 尝试发送其他媒体到 {task.target_chat_id} (尝试 {attempt + 1}/{max_retries})")
-                            result = await asyncio.wait_for(
-                                self.client.send_document(
-                                    chat_id=task.target_chat_id,
-                                    document=original_message.document.file_id if original_message.document else None,
-                                    caption=caption,
-                                    reply_markup=buttons
-                                ),
-                                timeout=30.0
-                            )
-                            logger.info(f"✅ 其他媒体发送成功，消息ID: {result.id}")
-                            return True
+                            
+                            # 检查是否有其他类型的媒体
+                            if hasattr(original_message, 'media') and original_message.media:
+                                # 如果有媒体但类型未知，尝试转发原消息
+                                logger.info(f"📎 转发未知媒体类型消息 {message_id}")
+                                result = await asyncio.wait_for(
+                                    self.client.forward_messages(
+                                        chat_id=task.target_chat_id,
+                                        from_chat_id=original_message.chat.id,
+                                        message_ids=message_id
+                                    ),
+                                    timeout=30.0
+                                )
+                                logger.info(f"✅ 媒体转发成功，消息ID: {result.id}")
+                                return True
+                            else:
+                                # 没有媒体，只发送文本
+                                logger.info(f"📎 发送纯文本消息 {message_id}")
+                                result = await asyncio.wait_for(
+                                    self.client.send_message(
+                                        chat_id=task.target_chat_id,
+                                        text=caption,
+                                        reply_markup=buttons
+                                    ),
+                                    timeout=30.0
+                                )
+                                logger.info(f"✅ 文本消息发送成功，消息ID: {result.id}")
+                                return True
                             
                     except asyncio.TimeoutError:
                         logger.warning(f"⚠️ {media_type} {message_id} 发送超时 (尝试 {attempt + 1}/{max_retries})")
                         if attempt < max_retries - 1:
-                            logger.info(f"⏳ 等待 {retry_delay} 秒后重试...")
+                            logger.debug(f"⏳ 等待 {retry_delay} 秒后重试...")
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2
                         else:
@@ -1731,7 +1980,7 @@ class CloningEngine:
                     except Exception as send_error:
                         logger.error(f"❌ 发送 {media_type} {message_id} 失败 (尝试 {attempt + 1}/{max_retries}): {send_error}")
                         if attempt < max_retries - 1:
-                            logger.info(f"⏳ 等待 {retry_delay} 秒后重试...")
+                            logger.debug(f"⏳ 等待 {retry_delay} 秒后重试...")
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2
                         else:
@@ -1743,8 +1992,23 @@ class CloningEngine:
                 wait_time = int(str(flood_error).split('A wait of ')[1].split(' seconds')[0])
                 logger.warning(f"⚠️ 遇到FloodWait限制，需要等待 {wait_time} 秒")
                 
+                # 检查任务状态
+                if task.should_stop():
+                    logger.info(f"⚠️ 任务 {task.task_id} 在FloodWait等待期间被{task.status}，停止处理")
+                    return False
+                
+                # 如果等待时间过长（超过1小时），记录警告并考虑暂停任务
+                if wait_time > 3600:
+                    logger.warning(f"⚠️ FloodWait等待时间过长: {wait_time}秒 ({wait_time/3600:.1f}小时)")
+                    logger.warning(f"⚠️ 任务 {task.task_id} 可能需要很长时间才能继续")
+                    
+                    # 如果等待时间超过4小时，建议暂停任务
+                    if wait_time > 14400:  # 4小时
+                        logger.warning(f"⚠️ FloodWait等待时间过长（{wait_time/3600:.1f}小时），建议暂停任务")
+                        logger.warning(f"⚠️ 任务 {task.task_id} 将在等待完成后继续，但可能需要很长时间")
+                
                 # 等待指定时间
-                logger.info(f"⏳ 等待 {wait_time} 秒后重试...")
+                logger.debug(f"⏳ 等待 {wait_time} 秒后重试...")
                 await asyncio.sleep(wait_time)
                 
                 # 重试发送
@@ -1860,10 +2124,19 @@ class CloningEngine:
         
         task = self.active_tasks[task_id]
         task.status = "cancelled"
+        task._cancelled = True  # 设置取消标志
         task.end_time = datetime.now()
         
         logger.info(f"🛑 正在取消任务: {task_id}")
-        logger.info(f"📊 任务统计: 已处理 {task.processed_messages}/{task.total_messages} 条消息")
+        logger.debug(f"📊 任务统计: 已处理 {task.processed_messages}/{task.total_messages} 条消息")
+        
+        # 取消后台任务
+        if task_id in self.background_tasks:
+            background_task = self.background_tasks[task_id]
+            if not background_task.done():
+                background_task.cancel()
+                logger.info(f"🛑 已取消后台任务: {task_id}")
+            del self.background_tasks[task_id]
         
         # 保存到历史记录
         self.task_history.append(task.to_dict())
@@ -1884,6 +2157,16 @@ class CloningEngine:
         
         logger.info(f"✅ 任务已成功取消: {task_id}")
         return True
+    
+    async def stop_all_tasks(self):
+        """停止所有活动任务"""
+        logger.info(f"🛑 开始停止所有活动任务，共 {len(self.active_tasks)} 个")
+        
+        # 停止所有任务
+        for task_id in list(self.active_tasks.keys()):
+            await self.cancel_task(task_id)
+        
+        logger.info(f"✅ 所有任务已停止")
     
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务状态"""
@@ -1948,7 +2231,7 @@ class CloningEngine:
                 # 检查任务是否运行时间过长
                 if hasattr(task, 'start_time') and task.start_time:
                     elapsed_time = (current_time - task.start_time).total_seconds()
-                    max_task_time = task.config.get('max_task_time', 3600)  # 默认1小时
+                    max_task_time = task.config.get('max_task_time', DEFAULT_USER_CONFIG.get('max_task_time', 172800))  # 从配置读取，默认48小时
                     
                     if elapsed_time > max_task_time:
                         logger.warning(f"⚠️ 发现卡住的任务: {task_id}, 运行时间: {elapsed_time:.1f}秒")
@@ -2011,10 +2294,10 @@ class CloningEngine:
                             chat_id, 
                             message_ids=list(range(start_id, batch_end + 1))
                         ),
-                        timeout=25.0  # 25秒超时
+                        timeout=120.0  # 增加到120秒超时
                     )
                 except asyncio.TimeoutError:
-                    logger.error(f"获取消息超时（25秒），范围: {start_id} - {batch_end}")
+                    logger.error(f"获取消息超时（120秒），范围: {start_id} - {batch_end}")
                     return []
                 
                 # 过滤掉None值
@@ -2026,10 +2309,10 @@ class CloningEngine:
                 try:
                     messages = await asyncio.wait_for(
                         self.client.get_messages(chat_id, 500),
-                        timeout=25.0  # 25秒超时
+                        timeout=120.0  # 增加到120秒超时
                     )
                 except asyncio.TimeoutError:
-                    logger.error(f"获取最近500条消息超时（25秒），频道: {chat_id}")
+                    logger.error(f"获取最近500条消息超时（120秒），频道: {chat_id}")
                     return []
                 
                 # 确保返回的是列表
@@ -2071,9 +2354,9 @@ class CloningEngine:
         """处理一批消息"""
         try:
             # 获取任务超时设置
-            max_execution_time = task.config.get('task_timeout', 7200) if hasattr(task, 'config') and task.config else 7200
+            max_execution_time = task.config.get('task_timeout', 86400) if hasattr(task, 'config') and task.config else 86400
             
-            logger.info(f"🔍 开始处理消息批次:")
+            logger.debug(f"🔍 开始处理消息批次:")
             logger.info(f"  • 任务ID: {task.task_id}")
             logger.info(f"  • 消息数量: {len(messages)}")
             logger.info(f"  • 任务状态: {task.status}")
@@ -2088,13 +2371,13 @@ class CloningEngine:
             media_groups = {}
             standalone_messages = []
             
-            logger.info(f"🔍 开始分析消息类型...")
+            logger.debug(f"🔍 开始分析消息类型...")
             for i, message in enumerate(messages):
                 try:
-                    logger.info(f"🔍 分析消息 {i+1}/{len(messages)}: ID={message.id}")
-                    logger.info(f"  • 媒体组ID: {getattr(message, 'media_group_id', None)}")
-                    logger.info(f"  • 消息类型: photo={bool(message.photo)}, video={bool(message.video)}, document={bool(message.document)}")
-                    logger.info(f"  • 文本内容: {bool(message.text)}, caption: {bool(message.caption)}")
+                    logger.debug(f"🔍 分析消息 {i+1}/{len(messages)}: ID={message.id}")
+                    logger.debug(f"  • 媒体组ID: {getattr(message, 'media_group_id', None)}")
+                    logger.debug(f"  • 消息类型: photo={bool(message.photo)}, video={bool(message.video)}, document={bool(message.document)}")
+                    logger.debug(f"  • 文本内容: {bool(message.text)}, caption: {bool(message.caption)}")
                     
                     if hasattr(message, 'media_group_id') and message.media_group_id:
                         if message.media_group_id not in media_groups:
@@ -2109,15 +2392,19 @@ class CloningEngine:
                     logger.warning(f"  • 错误类型: {type(e).__name__}")
                     standalone_messages.append(message)
             
-            logger.info(f"📊 消息分析完成:")
+            logger.debug(f"📊 消息分析完成:")
             logger.info(f"  • 媒体组数量: {len(media_groups)}")
             logger.info(f"  • 独立消息数量: {len(standalone_messages)}")
             for media_group_id, group_messages in media_groups.items():
                 logger.info(f"  • 媒体组 {media_group_id}: {len(group_messages)} 条消息")
             
-            # 处理媒体组
-            logger.info(f"🔄 开始处理 {len(media_groups)} 个媒体组...")
-            for media_group_index, (media_group_id, group_messages) in enumerate(media_groups.items()):
+            # 处理媒体组 - 安全顺序处理（确保媒体组完整性）
+            logger.info(f"🔄 开始顺序处理 {len(media_groups)} 个媒体组...")
+            
+            # 按媒体组ID排序，确保处理顺序
+            sorted_media_groups = sorted(media_groups.items(), key=lambda x: x[0])
+            
+            for media_group_index, (media_group_id, group_messages) in enumerate(sorted_media_groups):
                 try:
                     logger.info(f"📱 处理媒体组 {media_group_index + 1}/{len(media_groups)}: {media_group_id}")
                     logger.info(f"🔍 媒体组详情:")
@@ -2137,18 +2424,18 @@ class CloningEngine:
                         logger.warning(f"⚠️ 任务执行超时（{elapsed_time:.1f}秒 > {max_execution_time}秒），停止处理")
                         return False
                     
-                    logger.info(f"🔍 媒体组处理前检查:")
+                    logger.debug(f"🔍 媒体组处理前检查:")
                     logger.info(f"  • 任务运行时间: {elapsed_time:.1f}秒")
                     logger.info(f"  • 是否应该停止: {task.should_stop()}")
                     
                     group_messages.sort(key=lambda m: m.id)
-                    logger.info(f"🔧 开始处理媒体组 {media_group_id}...")
+                    logger.debug(f"🔧 开始处理媒体组 {media_group_id}...")
                     start_process_time = time.time()
                     
                     success = await self._process_media_group(task, group_messages)
                     
                     process_duration = time.time() - start_process_time
-                    logger.info(f"🔍 媒体组处理完成:")
+                    logger.debug(f"🔍 媒体组处理完成:")
                     logger.info(f"  • 处理耗时: {process_duration:.2f}秒")
                     logger.info(f"  • 处理结果: {success}")
                     
@@ -2172,7 +2459,7 @@ class CloningEngine:
                         # 如果没有总消息数，使用已处理消息数作为进度
                         task.progress = min(task.processed_messages * 10, 100.0)
                     
-                    logger.info(f"📊 任务进度更新:")
+                    logger.debug(f"📊 任务进度更新:")
                     logger.info(f"  • 已处理消息: {task.processed_messages}")
                     logger.info(f"  • 总消息数: {task.total_messages}")
                     logger.info(f"  • 进度百分比: {task.progress:.1f}%")
@@ -2181,9 +2468,9 @@ class CloningEngine:
                     if self.progress_callback:
                         await self.progress_callback(task)
                     
-                    # 使用配置中的媒体组延迟设置
-                    media_group_delay = task.config.get('media_group_delay', 0.3)
-                    logger.info(f"⏳ 媒体组处理完成，等待 {media_group_delay} 秒...")
+                    # 媒体组间安全延迟（确保媒体组完整性）
+                    media_group_delay = self.media_group_delay
+                    logger.debug(f"⏳ 媒体组处理完成，等待 {media_group_delay} 秒...")
                     await asyncio.sleep(media_group_delay)
                     
                 except Exception as e:
@@ -2230,9 +2517,8 @@ class CloningEngine:
                     if self.progress_callback:
                         await self.progress_callback(task)
                     
-                    # 使用配置中的消息延迟设置
-                    message_delay = task.config.get('message_delay', 0.2)
-                    await asyncio.sleep(message_delay)
+                    # 应用安全延迟（避免规律性操作）
+                    await self._apply_safe_delay()
                     
                 except Exception as e:
                     logger.error(f"处理消息失败: {e}")
@@ -2250,6 +2536,27 @@ class CloningEngine:
     # 评论处理相关函数已移除
     
     # 所有评论处理相关函数已移除
+    
+    async def stop_all_tasks(self):
+        """停止所有活动任务"""
+        try:
+            logger.info("🛑 开始停止所有搬运任务")
+            
+            stopped_count = 0
+            for task_id, task in list(self.active_tasks.items()):
+                try:
+                    if task.status in ['pending', 'running']:
+                        task.status = 'stopped'
+                        task.is_running = False
+                        stopped_count += 1
+                        logger.info(f"✅ 已停止任务: {task_id}")
+                except Exception as e:
+                    logger.error(f"停止任务失败 {task_id}: {e}")
+            
+            logger.info(f"✅ 已停止 {stopped_count} 个搬运任务")
+            
+        except Exception as e:
+            logger.error(f"停止所有任务失败: {e}")
 
 # ==================== 导出函数 ====================
 def create_cloning_engine(client: Client, config: Dict[str, Any], data_manager=None) -> CloningEngine:

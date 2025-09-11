@@ -185,6 +185,28 @@ class DataManager:
         """创建新用户配置"""
         return await self.save_user_config(user_id, DEFAULT_USER_CONFIG.copy())
     
+    async def get_all_user_ids(self) -> List[str]:
+        """获取所有用户ID列表"""
+        if not self.initialized:
+            return []
+        
+        try:
+            import asyncio
+            # 获取所有用户文档
+            loop = asyncio.get_event_loop()
+            docs = await loop.run_in_executor(None, lambda: list(self.db.collection('users').stream()))
+            
+            user_ids = []
+            for doc in docs:
+                user_ids.append(doc.id)
+            
+            logger.info(f"📂 获取到 {len(user_ids)} 个用户ID")
+            return user_ids
+            
+        except Exception as e:
+            logger.error(f"获取所有用户ID失败: {e}")
+            return []
+    
     async def get_channel_pairs(self, user_id: str) -> List[Dict[str, Any]]:
         """获取用户的频道组列表"""
         if not self.initialized:
@@ -438,11 +460,141 @@ class DataManager:
             config = await self.get_user_config(user_id)
             config['monitor_enabled'] = monitor_enabled
             config['monitored_pairs'] = monitored_pairs
-            
-            return await self.save_user_config(user_id, config)
-            
+            await self.save_user_config(user_id, config)
+            logger.info(f"已更新用户 {user_id} 的监听设置")
+            return True
         except Exception as e:
             logger.error(f"更新监听设置失败: {e}")
+            return False
+    
+    # ==================== 监听任务数据管理 ====================
+    
+    async def create_monitoring_task(self, user_id: str, task_data: Dict[str, Any]) -> str:
+        """创建监听任务"""
+        try:
+            task_id = task_data.get('task_id')
+            if not task_id:
+                task_id = f"monitor_{user_id}_{int(datetime.now().timestamp())}"
+                task_data['task_id'] = task_id
+            
+            # 获取用户配置
+            user_config = await self.get_user_config(user_id)
+            
+            # 初始化监听任务存储
+            if 'monitoring_tasks' not in user_config:
+                user_config['monitoring_tasks'] = {}
+            
+            # 添加任务数据
+            task_data['created_at'] = datetime.now().isoformat()
+            task_data['status'] = 'pending'
+            user_config['monitoring_tasks'][task_id] = task_data
+            
+            # 保存配置
+            await self.save_user_config(user_id, user_config)
+            
+            logger.info(f"✅ 创建监听任务: {task_id}")
+            return task_id
+            
+        except Exception as e:
+            logger.error(f"创建监听任务失败: {e}")
+            raise
+    
+    async def get_monitoring_tasks(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """获取用户的监听任务列表"""
+        try:
+            user_config = await self.get_user_config(user_id)
+            return user_config.get('monitoring_tasks', {})
+        except Exception as e:
+            logger.error(f"获取监听任务失败: {e}")
+            return {}
+    
+    async def get_monitoring_task(self, user_id: str, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取指定的监听任务"""
+        try:
+            tasks = await self.get_monitoring_tasks(user_id)
+            return tasks.get(task_id)
+        except Exception as e:
+            logger.error(f"获取监听任务失败: {e}")
+            return None
+    
+    async def update_monitoring_task(self, user_id: str, task_id: str, updates: Dict[str, Any]) -> bool:
+        """更新监听任务"""
+        try:
+            user_config = await self.get_user_config(user_id)
+            
+            if 'monitoring_tasks' not in user_config:
+                user_config['monitoring_tasks'] = {}
+            
+            if task_id not in user_config['monitoring_tasks']:
+                logger.error(f"监听任务不存在: {task_id}")
+                return False
+            
+            # 更新任务数据
+            task_data = user_config['monitoring_tasks'][task_id]
+            task_data.update(updates)
+            task_data['updated_at'] = datetime.now().isoformat()
+            
+            # 保存配置
+            await self.save_user_config(user_id, user_config)
+            
+            logger.info(f"✅ 更新监听任务: {task_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"更新监听任务失败: {e}")
+            return False
+    
+    async def delete_monitoring_task(self, user_id: str, task_id: str) -> bool:
+        """删除监听任务"""
+        try:
+            user_config = await self.get_user_config(user_id)
+            
+            if 'monitoring_tasks' not in user_config:
+                return True
+            
+            if task_id in user_config['monitoring_tasks']:
+                del user_config['monitoring_tasks'][task_id]
+                await self.save_user_config(user_id, user_config)
+                logger.info(f"✅ 删除监听任务: {task_id}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"删除监听任务失败: {e}")
+            return False
+    
+    async def get_active_monitoring_tasks(self) -> List[Dict[str, Any]]:
+        """获取所有活跃的监听任务"""
+        try:
+            active_tasks = []
+            
+            # 获取所有用户
+            all_users = await self.get_all_user_ids()
+            
+            for user_id in all_users:
+                tasks = await self.get_monitoring_tasks(user_id)
+                for task_id, task_data in tasks.items():
+                    if task_data.get('status') == 'active':
+                        task_data['user_id'] = user_id
+                        task_data['task_id'] = task_id
+                        active_tasks.append(task_data)
+            
+            return active_tasks
+            
+        except Exception as e:
+            logger.error(f"获取活跃监听任务失败: {e}")
+            return []
+    
+    async def save_monitoring_task_stats(self, user_id: str, task_id: str, stats: Dict[str, Any]) -> bool:
+        """保存监听任务统计信息"""
+        try:
+            updates = {
+                'stats': stats,
+                'last_stats_update': datetime.now().isoformat()
+            }
+            return await self.update_monitoring_task(user_id, task_id, updates)
+        except Exception as e:
+            logger.error(f"保存监听任务统计失败: {e}")
             return False
     
     async def health_check(self) -> Dict[str, Any]:
