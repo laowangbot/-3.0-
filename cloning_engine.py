@@ -742,6 +742,43 @@ class CloningEngine:
             logger.error(f"权限检查失败: {e}")
             return False
     
+
+    async def _count_actual_messages_in_range(self, chat_id: str, start_id: int, end_id: int) -> int:
+        """计算指定范围内实际存在的消息数量"""
+        logger.info(f"📊 开始计算实际消息数量: {start_id} - {end_id}")
+        actual_count = 0
+        batch_size = 1000
+        current_id = start_id
+        
+        while current_id <= end_id:
+            try:
+                batch_end = min(current_id + batch_size - 1, end_id)
+                message_ids = list(range(current_id, batch_end + 1))
+                
+                logger.debug(f"📊 检查批次: {current_id} - {batch_end} ({len(message_ids)} 个ID)")
+                
+                # 获取消息
+                messages = await self.client.get_messages(chat_id, message_ids=message_ids)
+                
+                # 计算有效消息数量
+                valid_count = sum(1 for msg in messages if msg is not None)
+                actual_count += valid_count
+                
+                logger.debug(f"📊 批次 {current_id}-{batch_end}: 发现 {valid_count} 条消息")
+                
+                current_id = batch_end + 1
+                
+                # 添加小延迟避免API限制
+                await asyncio.sleep(0.05)
+                
+            except Exception as e:
+                logger.warning(f"📊 计算批次失败 {current_id}-{batch_end}: {e}")
+                current_id += batch_size
+                continue
+        
+        logger.info(f"📊 实际消息数量计算完成: {actual_count} 条")
+        return actual_count
+    
     async def _count_messages(self, chat_id: str, start_id: Optional[int] = None, 
                              end_id: Optional[int] = None) -> int:
         """计算消息数量"""
@@ -1003,9 +1040,14 @@ class CloningEngine:
                 logger.info("没有找到需要搬运的消息")
                 return True
             
-            # 计算总消息数
+            # 计算总消息数 - 修复版本
             if actual_start_id and task.end_id:
-                task.total_messages = task.end_id - actual_start_id + 1
+                # 先计算实际存在的消息数量
+                actual_total = await self._count_actual_messages_in_range(
+                    task.source_chat_id, actual_start_id, task.end_id
+                )
+                task.total_messages = actual_total
+                logger.info(f"📊 实际总消息数: {actual_total} (范围: {actual_start_id}-{task.end_id})")
             else:
                 task.total_messages = len(first_batch)
             
