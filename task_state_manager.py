@@ -209,7 +209,14 @@ class TaskStateManager:
             with self._cache_lock:
                 if task_id not in self._task_cache:
                     logger.warning(f"任务不存在于缓存中: {task_id}")
-                    return False
+                    # 尝试从数据库加载任务
+                    task = await self._load_task_from_db(task_id)
+                    if task:
+                        self._task_cache[task_id] = task
+                        logger.info(f"✅ 从数据库加载任务到缓存: {task_id}")
+                    else:
+                        logger.error(f"❌ 无法从数据库加载任务: {task_id}")
+                        return False
                 
                 task = self._task_cache[task_id]
                 

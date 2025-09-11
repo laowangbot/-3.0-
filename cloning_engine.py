@@ -205,6 +205,19 @@ class CloningEngine:
         # 随机延迟设置（避免规律性操作）
         self.random_delay_range = (0.05, 0.15)  # 随机延迟范围：0.05-0.15秒
         
+        # API限流控制
+        self.api_call_count = 0  # API调用计数器
+        self.api_call_window = 60  # 时间窗口（秒）
+        self.max_api_calls_per_window = 600  # 每窗口最大调用次数（10条/秒）
+        self.api_call_times = []  # API调用时间记录
+        self.last_rate_limit_warning = 0  # 上次限流警告时间
+        
+        # 消息缓存
+        self.message_cache = {}  # 消息缓存
+        self.last_cache_cleanup = 0  # 上次缓存清理时间
+        self.cache_cleanup_interval = 300  # 缓存清理间隔（秒）
+        self.max_memory_messages = 1000  # 最大内存消息数
+        
         # 进度回调
         self.progress_callback: Optional[Callable] = None
     
@@ -809,8 +822,50 @@ class CloningEngine:
     async def _count_actual_messages_in_range(self, chat_id: str, start_id: int, end_id: int) -> int:
         """计算指定范围内实际存在的消息数量"""
         logger.info(f"📊 开始计算实际消息数量: {start_id} - {end_id}")
+        
+        # 如果范围太大，使用估算方法而不是精确计算
+        total_range = end_id - start_id + 1
+        if total_range > 2000:  # 如果超过2000条消息，使用估算
+            logger.info(f"📊 范围过大({total_range}条)，使用估算方法")
+            # 采样计算：检查几个批次来估算
+            sample_batches = 5
+            batch_size = total_range // sample_batches
+            if batch_size < 100:
+                batch_size = 100
+            
+            actual_count = 0
+            for i in range(sample_batches):
+                try:
+                    sample_start = start_id + i * batch_size
+                    sample_end = min(sample_start + batch_size - 1, end_id)
+                    message_ids = list(range(sample_start, sample_end + 1))
+                    
+                    # 获取消息
+                    messages = await self.client.get_messages(chat_id, message_ids=message_ids)
+                    valid_count = sum(1 for msg in messages if msg is not None)
+                    actual_count += valid_count
+                    
+                    logger.debug(f"📊 采样批次 {i+1}/{sample_batches}: {sample_start}-{sample_end}, 发现 {valid_count} 条")
+                    
+                    # 添加延迟避免API限制
+                    await asyncio.sleep(0.1)
+                    
+                except Exception as e:
+                    logger.warning(f"📊 采样批次失败: {e}")
+                    continue
+            
+            # 基于采样结果估算总数
+            if sample_batches > 0:
+                estimated_count = int((actual_count / sample_batches) * (total_range / batch_size))
+                logger.info(f"📊 估算消息数量: {estimated_count} 条 (基于 {actual_count}/{sample_batches} 个采样)")
+                return estimated_count
+            else:
+                logger.warning("📊 采样失败，使用范围估算")
+                return total_range
+        
+        # 小范围使用精确计算
         actual_count = 0
-        batch_size = 1000
+        batch_size = 500  # 减小批次大小
         current_id = start_id
         
         while current_id <= end_id:
@@ -820,8 +875,11 @@ class CloningEngine:
                 
                 logger.debug(f"📊 检查批次: {current_id} - {batch_end} ({len(message_ids)} 个ID)")
                 
-                # 获取消息
-                messages = await self.client.get_messages(chat_id, message_ids=message_ids)
+                # 添加超时控制
+                messages = await asyncio.wait_for(
+                    self.client.get_messages(chat_id, message_ids=message_ids),
+                    timeout=30.0  # 30秒超时
+                )
                 
                 # 计算有效消息数量
                 valid_count = sum(1 for msg in messages if msg is not None)
@@ -831,9 +889,13 @@ class CloningEngine:
                 
                 current_id = batch_end + 1
                 
-                # 添加小延迟避免API限制
-                await asyncio.sleep(0.05)
+                # 添加延迟避免API限制
+                await asyncio.sleep(0.1)
                 
+            except asyncio.TimeoutError:
+                logger.warning(f"📊 批次超时 {current_id}-{batch_end}，跳过")
+                current_id += batch_size
+                continue
             except Exception as e:
                 logger.warning(f"📊 计算批次失败 {current_id}-{batch_end}: {e}")
                 current_id += batch_size
