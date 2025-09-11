@@ -302,9 +302,15 @@ class MultiBotDataManager:
     async def get_channel_pairs(self, user_id: str) -> List[Dict[str, Any]]:
         """获取用户的频道组列表"""
         if not self.initialized:
+            logger.warning(f"数据管理器未初始化，返回空列表 (Bot: {self.bot_id})")
             return []
         
         try:
+            # 检查数据库连接
+            if self.db is None:
+                logger.warning(f"Firebase数据库连接为空，返回空列表 (Bot: {self.bot_id})")
+                return []
+            
             doc_ref = self._get_user_doc_ref(user_id)
             doc = doc_ref.get()
             

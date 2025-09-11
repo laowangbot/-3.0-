@@ -5251,8 +5251,8 @@ class TelegramBot:
                 logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
                 del self.user_states[user_id]
             
-            # 直接获取并显示管理员频道列表
-            admin_channels = await self._get_admin_channels()
+            # 直接获取并显示管理员频道列表（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             
             if not admin_channels:
                 await callback_query.edit_message_text(
@@ -5338,8 +5338,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -5437,9 +5437,10 @@ class TelegramBot:
                 [("🔙 返回频道管理", "show_channel_admin_test")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
-                reply_markup=generate_button_layout(buttons)
+                generate_button_layout(buttons)
             )
             
         except Exception as e:
@@ -5452,8 +5453,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -5577,8 +5578,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -5676,8 +5677,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -5775,8 +5776,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -5855,8 +5856,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -5963,8 +5964,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6035,8 +6036,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6162,8 +6163,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6239,8 +6240,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6326,8 +6327,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6647,8 +6648,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6723,8 +6724,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6881,8 +6882,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -6937,8 +6938,8 @@ class TelegramBot:
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -7647,8 +7648,8 @@ class TelegramBot:
             
             selected_targets = self.clone_test_selections[user_id]['selected_targets']
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -9048,8 +9049,8 @@ https://t.me/channel_name 1-10
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -19882,8 +19883,8 @@ t.me/test_channel
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -19957,8 +19958,8 @@ t.me/test_channel
             user_id = str(callback_query.from_user.id)
             channel_id = int(callback_query.data.split(':')[1])
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
@@ -20416,8 +20417,8 @@ t.me/test_channel
                 await callback_query.edit_message_text("❌ 消息ID解析失败")
                 return
             
-            # 获取频道信息
-            admin_channels = await self._get_admin_channels()
+            # 获取频道信息（使用缓存，减少验证）
+            admin_channels = await self._get_admin_channels(force_refresh=False)
             channel_info = None
             for channel in admin_channels:
                 if channel.get('id') == channel_id:
