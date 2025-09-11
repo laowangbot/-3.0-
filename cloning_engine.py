@@ -2659,11 +2659,13 @@ class CloningEngine:
                     logger.debug(f"  • 消息类型: photo={bool(message.photo)}, video={bool(message.video)}, document={bool(message.document)}")
                     logger.debug(f"  • 文本内容: {bool(message.text)}, caption: {bool(message.caption)}")
                     
-                    if hasattr(message, 'media_group_id') and message.media_group_id:
-                        if message.media_group_id not in media_groups:
-                            media_groups[message.media_group_id] = []
-                        media_groups[message.media_group_id].append(message)
-                        logger.info(f"  • 添加到媒体组: {message.media_group_id}")
+                    # 检查是否有媒体组ID
+                    media_group_id = getattr(message, 'media_group_id', None)
+                    if media_group_id:
+                        if media_group_id not in media_groups:
+                            media_groups[media_group_id] = []
+                        media_groups[media_group_id].append(message)
+                        logger.info(f"  • 添加到媒体组: {media_group_id}")
                     else:
                         standalone_messages.append(message)
                         logger.info(f"  • 添加为独立消息")
@@ -2707,12 +2709,31 @@ class CloningEngine:
             
             # 按消息ID排序队列
             try:
-                message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (x[1].id if hasattr(x[1], 'id') and x[1].id is not None else 0))
+                def get_sort_key(item):
+                    if len(item) > 1:  # 媒体组
+                        return item[-1]  # 使用最早消息ID
+                    else:  # 独立消息
+                        msg = item[1]
+                        if hasattr(msg, 'id') and msg.id is not None:
+                            return msg.id
+                        else:
+                            return 0
+                
+                message_queue.sort(key=get_sort_key)
+                logger.info(f"📊 消息队列排序成功")
             except Exception as e:
                 logger.error(f"❌ 消息队列排序失败: {e}")
                 # 使用更安全的排序方法
                 try:
-                    message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (getattr(x[1], 'id', 0) if hasattr(x[1], 'id') else 0))
+                    def get_safe_sort_key(item):
+                        if len(item) > 1:  # 媒体组
+                            return item[-1] if isinstance(item[-1], (int, float)) else 0
+                        else:  # 独立消息
+                            msg = item[1]
+                            return getattr(msg, 'id', 0) if hasattr(msg, 'id') else 0
+                    
+                    message_queue.sort(key=get_safe_sort_key)
+                    logger.info(f"📊 使用备用队列排序方法成功")
                 except Exception as e2:
                     logger.error(f"❌ 备用队列排序方法也失败: {e2}")
                     logger.warning(f"⚠️ 跳过消息队列排序，保持原始顺序")
@@ -2724,13 +2745,25 @@ class CloningEngine:
                 queue_info = []
                 for i, item in enumerate(message_queue[:10]):  # 只显示前10个
                     if item[0] == 'standalone':
-                        queue_info.append(f"独立消息ID:{item[1].id}")
+                        msg_id = getattr(item[1], 'id', 'NO_ID')
+                        queue_info.append(f"独立消息ID:{msg_id}")
                     elif item[0] == 'media_group':
-                        queue_info.append(f"媒体组ID:{item[1]}(最早:{item[3]})")
+                        group_id = item[1]
+                        earliest_id = item[3] if len(item) > 3 else 'NO_ID'
+                        queue_info.append(f"媒体组ID:{group_id}(最早:{earliest_id})")
                 logger.info(f"📋 队列前10项: {queue_info}")
                 
                 if len(message_queue) > 10:
                     logger.info(f"📋 ... 还有 {len(message_queue) - 10} 项")
+                
+                # 显示排序后的ID序列
+                sorted_ids = []
+                for item in message_queue:
+                    if item[0] == 'standalone':
+                        sorted_ids.append(getattr(item[1], 'id', 0))
+                    elif item[0] == 'media_group':
+                        sorted_ids.append(item[3] if len(item) > 3 else 0)
+                logger.info(f"📋 排序后的ID序列: {sorted_ids[:10]}{'...' if len(sorted_ids) > 10 else ''}")
             
             # 按顺序处理队列中的消息
             for queue_index, item in enumerate(message_queue):
