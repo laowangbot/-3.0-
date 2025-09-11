@@ -810,36 +810,46 @@ class TelegramBot:
         try:
             # 检查是否在Render环境中
             if self.config.get('is_render', False):
-                # 生成Telegram Web授权链接
-                api_id = self.config.get('api_id', 0)
-                api_hash = self.config.get('api_hash', '')
-                
-                if api_id and api_hash:
-                    web_auth_url = f"https://my.telegram.org/auth?to=apps&app_id={api_id}"
+                # 检查User API是否已经登录
+                if self.user_api_logged_in and self.user_api_manager:
+                    # 已经登录，不显示登录提示
                     await message.reply_text(
-                        "🌐 **Render环境User API登录**\n\n"
-                        "💡 **方法1：Telegram Web授权**\n"
-                        f"🔗 点击链接：{web_auth_url}\n"
-                        "1. 使用您的Telegram账号登录\n"
-                        "2. 授权应用访问\n"
-                        "3. 获取API凭据\n\n"
-                        "💡 **方法2：本地预登录**\n"
-                        "1. 在本地完成User API登录\n"
-                        "2. 将session文件上传到Render\n\n"
-                        "💡 **方法3：使用Bot API模式**\n"
-                        "🔧 当前使用Bot API模式，功能正常"
+                        "✅ **User API已登录**\n\n"
+                        "🔧 当前使用User API模式，功能正常\n"
+                        "💡 如需重新登录，请联系管理员"
                     )
+                    return True
                 else:
-                    await message.reply_text(
-                        "🌐 **Render环境限制**\n\n"
-                        "❌ 在Render环境中无法接收手机验证码\n"
-                        "💡 **解决方案：**\n"
-                        "1. 在本地完成User API登录\n"
-                        "2. 将session文件上传到Render\n"
-                        "3. 或使用Bot API模式进行搬运\n\n"
-                        "🔧 当前使用Bot API模式，功能正常"
-                    )
-                return True
+                    # 未登录，显示登录选项
+                    api_id = self.config.get('api_id', 0)
+                    api_hash = self.config.get('api_hash', '')
+                    
+                    if api_id and api_hash:
+                        web_auth_url = f"https://my.telegram.org/auth?to=apps&app_id={api_id}"
+                        await message.reply_text(
+                            "🌐 **Render环境User API登录**\n\n"
+                            "💡 **方法1：Telegram Web授权**\n"
+                            f"🔗 点击链接：{web_auth_url}\n"
+                            "1. 使用您的Telegram账号登录\n"
+                            "2. 授权应用访问\n"
+                            "3. 获取API凭据\n\n"
+                            "💡 **方法2：本地预登录**\n"
+                            "1. 在本地完成User API登录\n"
+                            "2. 将session文件上传到Render\n\n"
+                            "💡 **方法3：使用Bot API模式**\n"
+                            "🔧 当前使用Bot API模式，功能正常"
+                        )
+                    else:
+                        await message.reply_text(
+                            "🌐 **Render环境限制**\n\n"
+                            "❌ 在Render环境中无法接收手机验证码\n"
+                            "💡 **解决方案：**\n"
+                            "1. 在本地完成User API登录\n"
+                            "2. 将session文件上传到Render\n"
+                            "3. 或使用Bot API模式进行搬运\n\n"
+                            "🔧 当前使用Bot API模式，功能正常"
+                        )
+                    return True
             
             if not self.user_api_manager:
                 return False
@@ -2667,8 +2677,9 @@ class TelegramBot:
     async def _update_menu_details(self, message: Message, user_id: str):
         """异步更新菜单详细信息"""
         try:
-            # 获取用户统计信息
+            # 获取用户统计信息（减少不必要的频道组获取）
             try:
+                # 只在需要显示频道组数量时才获取
                 channel_pairs = await self.data_manager.get_channel_pairs(user_id)
             except Exception as e:
                 logger.error(f"获取频道组列表失败 {user_id}: {e}")
@@ -3116,9 +3127,18 @@ class TelegramBot:
                 logger.info(f"清理用户 {user_id} 的输入状态: {self.user_states[user_id]}")
                 del self.user_states[user_id]
             
-            # 获取用户统计信息
-            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-            user_config = await self.data_manager.get_user_config(user_id)
+            # 获取用户统计信息（减少不必要的频道组获取）
+            try:
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+            except Exception as e:
+                logger.error(f"获取频道组列表失败 {user_id}: {e}")
+                channel_pairs = []
+            
+            try:
+                user_config = await self.data_manager.get_user_config(user_id)
+            except Exception as e:
+                logger.error(f"获取用户配置失败 {user_id}: {e}")
+                user_config = {}
             
             # 获取 API 模式状态和按钮布局
             api_mode_status = ""
