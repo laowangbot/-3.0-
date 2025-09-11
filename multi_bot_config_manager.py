@@ -130,10 +130,18 @@ class MultiBotConfigManager:
             # 检查是否有特定机器人的环境变量前缀
             bot_prefix = f"{bot_name.upper()}_"
             
+            # 获取API ID并转换为整数
+            api_id_str = os.getenv(f"{bot_prefix}API_ID") or os.getenv('API_ID')
+            try:
+                api_id = int(api_id_str) if api_id_str else 0
+            except (ValueError, TypeError):
+                logger.error(f"❌ API_ID格式错误: {api_id_str}")
+                api_id = 0
+            
             config = {
                 "bot_name": bot_name,
                 "bot_token": os.getenv(f"{bot_prefix}BOT_TOKEN") or os.getenv('BOT_TOKEN'),
-                "api_id": os.getenv(f"{bot_prefix}API_ID") or os.getenv('API_ID'),
+                "api_id": api_id,
                 "api_hash": os.getenv(f"{bot_prefix}API_HASH") or os.getenv('API_HASH'),
                 "firebase_project_id": os.getenv(f"{bot_prefix}FIREBASE_PROJECT_ID") or os.getenv('FIREBASE_PROJECT_ID'),
                 "use_local_storage": os.getenv(f"{bot_prefix}USE_LOCAL_STORAGE", "false").lower() == "true",
@@ -187,10 +195,18 @@ class MultiBotConfigManager:
                     logger.warning("⚠️ 未找到环境文件")
                     return None
             
+            # 获取API ID并转换为整数
+            api_id_str = os.getenv('API_ID')
+            try:
+                api_id = int(api_id_str) if api_id_str else 0
+            except (ValueError, TypeError):
+                logger.error(f"❌ API_ID格式错误: {api_id_str}")
+                api_id = 0
+            
             config = {
                 "bot_name": bot_name,
                 "bot_token": os.getenv('BOT_TOKEN'),
-                "api_id": os.getenv('API_ID'),
+                "api_id": api_id,
                 "api_hash": os.getenv('API_HASH'),
                 "firebase_project_id": os.getenv('FIREBASE_PROJECT_ID'),
                 "use_local_storage": os.getenv('USE_LOCAL_STORAGE', 'false').lower() == 'true',

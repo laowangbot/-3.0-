@@ -142,8 +142,9 @@ class TelegramBot:
         # 尝试初始化 User API 管理器
         try:
             from user_api_manager import UserAPIManager
-            api_id = int(os.getenv('API_ID', '0'))
-            api_hash = os.getenv('API_HASH', '')
+            # 使用配置管理器获取正确的API ID和Hash
+            api_id = self.config.get('api_id', 0)
+            api_hash = self.config.get('api_hash', '')
             if api_id and api_hash:
                 self.user_api_manager = UserAPIManager(api_id, api_hash)
                 logger.info("ℹ️ User API 管理器已创建，等待初始化")
