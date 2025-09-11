@@ -103,6 +103,11 @@ class TelegramBot:
         # 初始化用户状态管理
         self.user_states = {}  # 存储用户状态
         
+        # 初始化频道信息缓存
+        self._admin_channels_cache = None  # 缓存管理员频道列表
+        self._cache_expiry = 0  # 缓存过期时间
+        self._cache_duration = 300  # 缓存持续时间（5分钟）
+        
         # 加载User API登录状态
         self._load_user_api_status()
     
@@ -9107,17 +9112,47 @@ https://t.me/channel_name 1-10
         """获取Bot API客户端（用于删除消息等操作）"""
         return self.client
     
-    async def _get_admin_channels(self):
-        """获取机器人是管理员的频道列表（仅显示本地数据，不自动验证）"""
+    async def _safe_edit_message(self, callback_query, text, reply_markup=None):
+        """安全地编辑消息，处理MESSAGE_NOT_MODIFIED错误"""
         try:
+            await callback_query.edit_message_text(
+                text=text,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            if "MESSAGE_NOT_MODIFIED" in str(e):
+                # 消息内容没有变化，只更新按钮
+                if reply_markup:
+                    await callback_query.edit_message_reply_markup(
+                        reply_markup=reply_markup
+                    )
+            else:
+                raise e
+    
+    async def _get_admin_channels(self, force_refresh=False):
+        """获取机器人是管理员的频道列表（带缓存优化）"""
+        try:
+            import time
+            
+            # 检查缓存是否有效
+            current_time = time.time()
+            if (not force_refresh and 
+                self._admin_channels_cache is not None and 
+                current_time < self._cache_expiry):
+                # 返回缓存的频道列表
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"📋 使用缓存的频道列表: {len(self._admin_channels_cache)} 个频道")
+                return self._admin_channels_cache
+            
             admin_channels = []
             
             # 从频道数据管理器获取所有频道（包括未验证的）
             all_channels = self.channel_data_manager.get_all_channels()
-            logger.info(f"🔍 从本地数据获取 {len(all_channels)} 个频道")
             
-            # 调试信息：打印频道数据管理器的状态
-            logger.info(f"🔍 频道数据管理器状态: 文件={self.channel_data_manager.data_file}, 数据量={len(self.channel_data_manager.channels_data)}")
+            # 只在调试模式下打印详细日志
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"🔍 从本地数据获取 {len(all_channels)} 个频道")
+                logger.debug(f"🔍 频道数据管理器状态: 文件={self.channel_data_manager.data_file}, 数据量={len(self.channel_data_manager.channels_data)}")
             
             for channel_data in all_channels:
                 channel_id = channel_data['id']
@@ -9126,18 +9161,29 @@ https://t.me/channel_name 1-10
                 if is_verified:
                     # 已验证的频道直接添加
                     admin_channels.append(channel_data)
-                    logger.info(f"📝 频道 {channel_id} 使用已验证的缓存数据")
+                    # 只在调试模式下打印每个频道的日志
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"📝 频道 {channel_id} 使用已验证的缓存数据")
                 else:
                     # 未验证的频道也添加，但标记为需要验证
                     channel_data['needs_verification'] = True
                     admin_channels.append(channel_data)
-                    logger.info(f"⚠️ 频道 {channel_id} 未验证，需要重新验证")
+                    # 只在调试模式下打印每个频道的日志
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"⚠️ 频道 {channel_id} 未验证，需要重新验证")
             
             # 添加已知频道（如果配置了）
             # 注意：_add_known_channels 方法不存在，暂时注释掉
             # await self._add_known_channels(admin_channels)
             
-            logger.info(f"✅ 获取到 {len(admin_channels)} 个频道（已验证: {len([c for c in admin_channels if c.get('verified', False)])} 个）")
+            # 更新缓存
+            self._admin_channels_cache = admin_channels
+            self._cache_expiry = current_time + self._cache_duration
+            
+            # 只在调试模式下打印汇总日志
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"✅ 获取到 {len(admin_channels)} 个频道（已验证: {len([c for c in admin_channels if c.get('verified', False)])} 个）")
+            
             return admin_channels
             
         except Exception as e:
