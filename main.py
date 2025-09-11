@@ -154,6 +154,11 @@ class TelegramBot:
             logger.warning(f"⚠️ 创建 User API 管理器失败: {e}")
             self.user_api_manager = None
         
+        # 检查是否在Render环境中，如果是则跳过User API登录
+        if self.config.get('is_render', False):
+            logger.info("🌐 检测到Render环境，跳过User API登录（无法接收验证码）")
+            self.user_api_manager = None
+        
         # 在Render环境中检查Firebase配额问题
         if self.config.get('is_render', False):
                 logger.info("🌐 检测到Render环境，检查Firebase配额状态...")
@@ -753,6 +758,19 @@ class TelegramBot:
     async def _handle_user_api_login_flow(self, message: Message) -> bool:
         """处理 User API 登录流程"""
         try:
+            # 检查是否在Render环境中
+            if self.config.get('is_render', False):
+                await message.reply_text(
+                    "🌐 **Render环境限制**\n\n"
+                    "❌ 在Render环境中无法接收手机验证码\n"
+                    "💡 **解决方案：**\n"
+                    "1. 在本地完成User API登录\n"
+                    "2. 将session文件上传到Render\n"
+                    "3. 或使用Bot API模式进行搬运\n\n"
+                    "🔧 当前使用Bot API模式，功能正常"
+                )
+                return True
+            
             if not self.user_api_manager:
                 return False
             
