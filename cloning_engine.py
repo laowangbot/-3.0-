@@ -500,28 +500,34 @@ class CloningEngine:
             
             # 添加超时保护的消息计数，增加重试机制
             logger.debug(f"📊 开始计算消息数量: {validated_source_id}")
-            retry_count = 0
-            max_retries = 3
-            while retry_count < max_retries:
-                try:
-                    task.total_messages = await asyncio.wait_for(
-                        self._count_messages(validated_source_id, start_id, end_id),
-                        timeout=120.0  # 增加到120秒超时
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        wait_time = retry_count * 2  # 递增延迟
-                        logger.warning(f"⚠️ 消息计数超时，{wait_time}秒后重试 ({retry_count}/{max_retries})")
-                        await asyncio.sleep(wait_time)
-                    else:
-                        logger.error(f"❌ 消息计数失败，已达到最大重试次数")
+            
+            # 检查是否跳过消息数量计算（多任务优化）
+            if config and config.get('skip_message_count', False):
+                logger.info(f"🚀 跳过消息数量计算，使用快速估算: {start_id}-{end_id}")
+                task.total_messages = int((end_id - start_id + 1) * 0.8)  # 快速估算
+            else:
+                retry_count = 0
+                max_retries = 3
+                while retry_count < max_retries:
+                    try:
+                        task.total_messages = await asyncio.wait_for(
+                            self._count_messages(validated_source_id, start_id, end_id),
+                            timeout=120.0  # 增加到120秒超时
+                        )
+                        break
+                    except asyncio.TimeoutError:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = retry_count * 2  # 递增延迟
+                            logger.warning(f"⚠️ 消息计数超时，{wait_time}秒后重试 ({retry_count}/{max_retries})")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logger.error(f"❌ 消息计数失败，已达到最大重试次数")
+                            task.total_messages = 1000  # 使用默认值
+                    except Exception as e:
+                        logger.error(f"❌ 消息计数异常: {e}")
                         task.total_messages = 1000  # 使用默认值
-                except Exception as e:
-                    logger.error(f"❌ 消息计数异常: {e}")
-                    task.total_messages = 1000  # 使用默认值
-                    break
+                        break
             task.stats['total_messages'] = task.total_messages
             logger.info(f"✅ 消息计数完成: {task.total_messages} 条")
             
@@ -536,8 +542,10 @@ class CloningEngine:
         return task
     
     async def create_batch_tasks(self, tasks_config: List[Dict[str, Any]]) -> List[CloneTask]:
-        """批量创建多个搬运任务"""
+        """批量创建多个搬运任务（优化版）"""
         created_tasks = []
+        
+        logger.info(f"🚀 开始批量创建 {len(tasks_config)} 个任务")
         
         for i, task_config in enumerate(tasks_config):
             try:
@@ -545,6 +553,9 @@ class CloningEngine:
                 if len(self.active_tasks) >= self.max_concurrent_tasks:
                     logger.warning(f"达到最大并发任务数限制: {self.max_concurrent_tasks}")
                     break
+                
+                # 为多任务优化：跳过消息数量计算，使用快速估算
+                task_config['skip_message_count'] = True  # 标记跳过消息数量计算
                 
                 # 创建单个任务
                 task = await self.create_task(
@@ -557,15 +568,19 @@ class CloningEngine:
                 
                 if task:
                     created_tasks.append(task)
-                    logger.info(f"批量任务 {i+1}/{len(tasks_config)} 创建成功: {task.task_id}")
+                    logger.info(f"✅ 批量任务 {i+1}/{len(tasks_config)} 创建成功: {task.task_id}")
                 else:
-                    logger.error(f"批量任务 {i+1}/{len(tasks_config)} 创建失败")
+                    logger.error(f"❌ 批量任务 {i+1}/{len(tasks_config)} 创建失败")
+                    
+                # 添加小延迟避免API限制
+                if i < len(tasks_config) - 1:
+                    await asyncio.sleep(0.5)  # 减少延迟，提高速度
                     
             except Exception as e:
-                logger.error(f"批量任务 {i+1}/{len(tasks_config)} 创建异常: {e}")
+                logger.error(f"❌ 批量任务 {i+1}/{len(tasks_config)} 创建异常: {e}")
                 continue
         
-        logger.info(f"批量创建任务完成: {len(created_tasks)}/{len(tasks_config)} 成功")
+        logger.info(f"🎉 批量创建任务完成: {len(created_tasks)}/{len(tasks_config)} 成功")
         return created_tasks
     
     async def _validate_channels(self, source_chat_id: str, target_chat_id: str, 
@@ -1025,30 +1040,40 @@ class CloningEngine:
             return False
     
     async def start_batch_cloning(self, tasks: List[CloneTask]) -> Dict[str, bool]:
-        """批量启动多个搬运任务"""
+        """批量启动多个搬运任务（优化版）"""
         results = {}
         
-        for i, task in enumerate(tasks):
-            try:
-                logger.info(f"启动批量任务 {i+1}/{len(tasks)}: {task.task_id}")
-                success = await self.start_cloning(task)
-                results[task.task_id] = success
-                
-                if success:
-                    logger.info(f"✅ 批量任务 {i+1}/{len(tasks)} 启动成功")
-                else:
-                    logger.error(f"❌ 批量任务 {i+1}/{len(tasks)} 启动失败")
-                
-                # 添加小延迟避免同时启动过多任务
-                if i < len(tasks) - 1:
-                    await asyncio.sleep(1.0)  # 增加延迟避免API限制
+        logger.info(f"🚀 开始批量启动 {len(tasks)} 个任务")
+        
+        # 使用并发启动，但限制并发数量
+        max_concurrent_start = min(5, len(tasks))  # 最多同时启动5个任务
+        semaphore = asyncio.Semaphore(max_concurrent_start)
+        
+        async def start_single_task(task, index):
+            async with semaphore:
+                try:
+                    logger.info(f"🚀 启动批量任务 {index+1}/{len(tasks)}: {task.task_id}")
+                    success = await self.start_cloning(task)
+                    results[task.task_id] = success
                     
-            except Exception as e:
-                logger.error(f"批量任务 {i+1}/{len(tasks)} 启动异常: {e}")
-                results[task.task_id] = False
+                    if success:
+                        logger.info(f"✅ 批量任务 {index+1}/{len(tasks)} 启动成功")
+                    else:
+                        logger.error(f"❌ 批量任务 {index+1}/{len(tasks)} 启动失败")
+                    
+                    return success
+                    
+                except Exception as e:
+                    logger.error(f"❌ 批量任务 {index+1}/{len(tasks)} 启动异常: {e}")
+                    results[task.task_id] = False
+                    return False
+        
+        # 并发启动所有任务
+        start_tasks = [start_single_task(task, i) for i, task in enumerate(tasks)]
+        await asyncio.gather(*start_tasks, return_exceptions=True)
         
         success_count = sum(1 for success in results.values() if success)
-        logger.info(f"批量启动完成: {success_count}/{len(tasks)} 成功")
+        logger.info(f"🎉 批量启动完成: {success_count}/{len(tasks)} 成功")
         return results
     
     async def _execute_cloning_background(self, task: CloneTask):
