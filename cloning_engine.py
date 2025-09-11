@@ -823,45 +823,14 @@ class CloningEngine:
         """计算指定范围内实际存在的消息数量"""
         logger.info(f"📊 开始计算实际消息数量: {start_id} - {end_id}")
         
-        # 如果范围太大，使用估算方法而不是精确计算
+        # 如果范围太大，直接使用范围估算（避免API调用延迟）
         total_range = end_id - start_id + 1
-        if total_range > 2000:  # 如果超过2000条消息，使用估算
-            logger.info(f"📊 范围过大({total_range}条)，使用估算方法")
-            # 采样计算：检查几个批次来估算
-            sample_batches = 5
-            batch_size = total_range // sample_batches
-            if batch_size < 100:
-                batch_size = 100
-            
-            actual_count = 0
-            for i in range(sample_batches):
-                try:
-                    sample_start = start_id + i * batch_size
-                    sample_end = min(sample_start + batch_size - 1, end_id)
-                    message_ids = list(range(sample_start, sample_end + 1))
-                    
-                    # 获取消息
-                    messages = await self.client.get_messages(chat_id, message_ids=message_ids)
-                    valid_count = sum(1 for msg in messages if msg is not None)
-                    actual_count += valid_count
-                    
-                    logger.debug(f"📊 采样批次 {i+1}/{sample_batches}: {sample_start}-{sample_end}, 发现 {valid_count} 条")
-                    
-                    # 添加延迟避免API限制
-                    await asyncio.sleep(0.1)
-                    
-                except Exception as e:
-                    logger.warning(f"📊 采样批次失败: {e}")
-                    continue
-            
-            # 基于采样结果估算总数
-            if sample_batches > 0:
-                estimated_count = int((actual_count / sample_batches) * (total_range / batch_size))
-                logger.info(f"📊 估算消息数量: {estimated_count} 条 (基于 {actual_count}/{sample_batches} 个采样)")
-                return estimated_count
-            else:
-                logger.warning("📊 采样失败，使用范围估算")
-                return total_range
+        if total_range > 200:  # 超过200条直接使用范围估算
+            logger.info(f"📊 范围较大({total_range}条)，使用范围估算方法（避免API延迟）")
+            # 直接返回范围大小，假设大部分消息都存在
+            estimated_count = int(total_range * 0.8)  # 假设80%的消息存在
+            logger.info(f"📊 范围估算消息数量: {estimated_count} 条")
+            return estimated_count
         
         # 小范围使用精确计算
         actual_count = 0
@@ -1002,16 +971,20 @@ class CloningEngine:
         
         try:
             # 创建任务状态记录
-            if task.user_id:
+            user_id = task.config.get('user_id') if task.config else None
+            if user_id:
                 await self.task_state_manager.create_task(
                     task_id=task.task_id,
-                    user_id=task.user_id,
+                    user_id=user_id,
                     source_chat_id=task.source_chat_id,
                     target_chat_id=task.target_chat_id,
                     start_id=task.start_id,
                     end_id=task.end_id,
                     config=task.config
                 )
+                logger.info(f"✅ 任务状态记录已创建: {task.task_id} (用户: {user_id})")
+            else:
+                logger.warning(f"⚠️ 任务缺少user_id，跳过状态记录创建: {task.task_id}")
             
             # 将任务添加到活动任务列表
             logger.info(f"🔧 [DEBUG] 添加任务到活动列表: {task.task_id}")
