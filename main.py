@@ -138,6 +138,32 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"❌ 加载User API状态失败: {e}")
             self.user_api_logged_in = False
+    
+    async def _restore_session_from_env(self) -> bool:
+        """从环境变量恢复User API session"""
+        try:
+            import base64
+            
+            # 获取环境变量
+            session_data = os.getenv('USER_SESSION_DATA')
+            
+            if not session_data:
+                logger.info("ℹ️ 未找到USER_SESSION_DATA环境变量")
+                return False
+            
+            # 解码session数据
+            decoded_session = base64.b64decode(session_data)
+            
+            # 写入session文件
+            with open('user_session.session', 'wb') as f:
+                f.write(decoded_session)
+            
+            logger.info("✅ 从环境变量恢复User API session成功")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 恢复session失败: {e}")
+            return False
         
         # 尝试初始化 User API 管理器
         try:
@@ -154,10 +180,26 @@ class TelegramBot:
             logger.warning(f"⚠️ 创建 User API 管理器失败: {e}")
             self.user_api_manager = None
         
-        # 检查是否在Render环境中，如果是则跳过User API登录
+        # 检查是否在Render环境中，如果是则尝试恢复session
         if self.config.get('is_render', False):
-            logger.info("🌐 检测到Render环境，跳过User API登录（无法接收验证码）")
-            self.user_api_manager = None
+            logger.info("🌐 检测到Render环境，尝试恢复User API session")
+            
+            # 尝试从环境变量恢复session
+            if await self._restore_session_from_env():
+                logger.info("✅ 成功从环境变量恢复User API session")
+                # 重新初始化User API管理器
+                try:
+                    from user_api_manager import UserAPIManager
+                    api_id = self.config.get('api_id', 0)
+                    api_hash = self.config.get('api_hash', '')
+                    if api_id and api_hash:
+                        self.user_api_manager = UserAPIManager(api_id, api_hash)
+                        logger.info("✅ User API 管理器已重新初始化")
+                except Exception as e:
+                    logger.warning(f"⚠️ 重新初始化User API管理器失败: {e}")
+            else:
+                logger.info("🌐 无法恢复User API session，使用Bot API模式")
+                self.user_api_manager = None
         
         # 在Render环境中检查Firebase配额问题
         if self.config.get('is_render', False):
@@ -760,15 +802,35 @@ class TelegramBot:
         try:
             # 检查是否在Render环境中
             if self.config.get('is_render', False):
-                await message.reply_text(
-                    "🌐 **Render环境限制**\n\n"
-                    "❌ 在Render环境中无法接收手机验证码\n"
-                    "💡 **解决方案：**\n"
-                    "1. 在本地完成User API登录\n"
-                    "2. 将session文件上传到Render\n"
-                    "3. 或使用Bot API模式进行搬运\n\n"
-                    "🔧 当前使用Bot API模式，功能正常"
-                )
+                # 生成Telegram Web授权链接
+                api_id = self.config.get('api_id', 0)
+                api_hash = self.config.get('api_hash', '')
+                
+                if api_id and api_hash:
+                    web_auth_url = f"https://my.telegram.org/auth?to=apps&app_id={api_id}"
+                    await message.reply_text(
+                        "🌐 **Render环境User API登录**\n\n"
+                        "💡 **方法1：Telegram Web授权**\n"
+                        f"🔗 点击链接：{web_auth_url}\n"
+                        "1. 使用您的Telegram账号登录\n"
+                        "2. 授权应用访问\n"
+                        "3. 获取API凭据\n\n"
+                        "💡 **方法2：本地预登录**\n"
+                        "1. 在本地完成User API登录\n"
+                        "2. 将session文件上传到Render\n\n"
+                        "💡 **方法3：使用Bot API模式**\n"
+                        "🔧 当前使用Bot API模式，功能正常"
+                    )
+                else:
+                    await message.reply_text(
+                        "🌐 **Render环境限制**\n\n"
+                        "❌ 在Render环境中无法接收手机验证码\n"
+                        "💡 **解决方案：**\n"
+                        "1. 在本地完成User API登录\n"
+                        "2. 将session文件上传到Render\n"
+                        "3. 或使用Bot API模式进行搬运\n\n"
+                        "🔧 当前使用Bot API模式，功能正常"
+                    )
                 return True
             
             if not self.user_api_manager:
