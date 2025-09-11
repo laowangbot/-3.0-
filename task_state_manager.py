@@ -379,13 +379,24 @@ class TaskStateManager:
             all_user_ids = await self.data_manager.get_all_user_ids()
             
             for user_id in all_user_ids:
-                user_config = await self.data_manager.get_user_config(user_id)
-                user_tasks = user_config.get('active_tasks', {})
-                
-                if task_id in user_tasks:
-                    task_dict = user_tasks[task_id]
-                    return self._dict_to_task_progress(task_dict)
+                try:
+                    user_config = await self.data_manager.get_user_config(user_id)
+                    if not user_config:
+                        continue
+                        
+                    user_tasks = user_config.get('active_tasks', {})
+                    
+                    if task_id in user_tasks:
+                        task_dict = user_tasks[task_id]
+                        task_progress = self._dict_to_task_progress(task_dict)
+                        if task_progress:
+                            logger.info(f"✅ 从数据库成功加载任务 {task_id} (用户: {user_id})")
+                            return task_progress
+                except Exception as e:
+                    logger.warning(f"搜索用户 {user_id} 的任务失败: {e}")
+                    continue
             
+            logger.warning(f"未找到任务 {task_id} 在数据库中")
             return None
             
         except Exception as e:

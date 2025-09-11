@@ -1444,7 +1444,14 @@ class CloningEngine:
                     continue
             
             logger.info(f"🎉 流式处理完成，共处理 {processed_batches} 个批次")
-            return True
+            
+            # 检查是否真的完成了所有消息
+            if current_id > end_id:
+                logger.info(f"✅ 任务 {task.task_id} 已完成所有消息处理 (current_id: {current_id}, end_id: {end_id})")
+                return True
+            else:
+                logger.warning(f"⚠️ 任务 {task.task_id} 可能未完成所有消息 (current_id: {current_id}, end_id: {end_id})")
+                return True  # 仍然返回True，因为可能没有更多消息
             
         except Exception as e:
             logger.error(f"流式处理剩余消息失败: {e}")
@@ -2684,7 +2691,8 @@ class CloningEngine:
                     
                     # 更新进度百分比
                     if hasattr(task, 'total_messages') and task.total_messages > 0:
-                        task.progress = (task.processed_messages / task.total_messages) * 100.0
+                        # 确保进度不超过100%
+                        task.progress = min((task.processed_messages / task.total_messages) * 100.0, 100.0)
                     else:
                         # 如果没有总消息数，使用已处理消息数作为进度
                         task.progress = min(task.processed_messages * 10, 100.0)
@@ -2692,6 +2700,9 @@ class CloningEngine:
                     logger.debug(f"📊 任务进度更新:")
                     logger.info(f"  • 已处理消息: {task.processed_messages}")
                     logger.info(f"  • 总消息数: {task.total_messages}")
+                    # 确保进度不超过100%
+                    if task.progress > 100.0:
+                        task.progress = 100.0
                     logger.info(f"  • 进度百分比: {task.progress:.1f}%")
                     
                     # 调用进度回调
@@ -2738,7 +2749,8 @@ class CloningEngine:
                     
                     # 更新进度百分比
                     if hasattr(task, 'total_messages') and task.total_messages > 0:
-                        task.progress = (task.processed_messages / task.total_messages) * 100.0
+                        # 确保进度不超过100%
+                        task.progress = min((task.processed_messages / task.total_messages) * 100.0, 100.0)
                     else:
                         # 如果没有总消息数，使用已处理消息数作为进度
                         task.progress = min(task.processed_messages * 10, 100.0)
