@@ -160,8 +160,30 @@
         "additional_buttons": [],
         "button_frequency": "always",
         "remove_usernames": true
+      },
+      "-1002780442514": {
+        "independent_enabled": true,
+        "keywords_enabled": false,
+        "keywords": [],
+        "replacements_enabled": false,
+        "replacements": {},
+        "content_removal": false,
+        "content_removal_mode": "text_only",
+        "remove_links": false,
+        "links_removal": false,
+        "links_removal_mode": "links_only",
+        "enhanced_filter_enabled": false,
+        "enhanced_filter_mode": "moderate",
+        "usernames_removal": false,
+        "filter_buttons": false,
+        "buttons_removal_mode": "remove_all",
+        "tail_text": "",
+        "tail_frequency": "always",
+        "tail_position": "end",
+        "additional_buttons": [],
+        "button_frequency": "always"
       }
     }
   },
-  "updated_at": "2025-09-11T22:18:10.300222"
+  "updated_at": "2025-09-11T23:10:05.243012"
 }

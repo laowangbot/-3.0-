@@ -62,8 +62,9 @@ class MultiBotDataManager:
             
             # 验证Firebase凭据
             if not self._validate_firebase_credentials(firebase_credentials):
-                logger.error("❌ Firebase凭据验证失败")
+                logger.error("❌ Firebase凭据验证失败，使用本地存储模式")
                 self.initialized = False
+                self.db = None
                 return
             
             # 初始化Firebase应用
@@ -172,7 +173,9 @@ class MultiBotDataManager:
     async def get_user_config(self, user_id: str) -> Dict[str, Any]:
         """获取用户配置"""
         if not self.initialized:
-            return DEFAULT_USER_CONFIG.copy()
+            # 如果Firebase不可用，尝试使用本地存储
+            logger.warning(f"Firebase未初始化，尝试从本地存储加载: {user_id}")
+            return await self._load_from_local_storage(user_id)
         
         try:
             # 优先使用优化的Firebase管理器
@@ -207,12 +210,16 @@ class MultiBotDataManager:
                 
         except Exception as e:
             logger.error(f"获取用户配置失败 {user_id}: {e}")
-            return DEFAULT_USER_CONFIG.copy()
+            # 如果Firebase获取失败，尝试使用本地存储
+            logger.warning(f"Firebase获取失败，尝试从本地存储加载: {user_id}")
+            return await self._load_from_local_storage(user_id)
     
     async def save_user_config(self, user_id: str, config: Dict[str, Any]) -> bool:
         """保存用户配置"""
         if not self.initialized:
-            return False
+            # 如果Firebase不可用，尝试使用本地存储
+            logger.warning(f"Firebase未初始化，尝试使用本地存储: {user_id}")
+            return await self._save_to_local_storage(user_id, config)
         
         try:
             # 优先使用优化的Firebase管理器
@@ -293,7 +300,9 @@ class MultiBotDataManager:
             
         except Exception as e:
             logger.error(f"保存用户配置失败 {user_id}: {e}")
-            return False
+            # 如果Firebase保存失败，尝试使用本地存储
+            logger.warning(f"Firebase保存失败，尝试使用本地存储: {user_id}")
+            return await self._save_to_local_storage(user_id, config)
     
     async def create_user_config(self, user_id: str) -> bool:
         """创建新用户配置"""
@@ -627,6 +636,53 @@ class MultiBotDataManager:
         except Exception as e:
             logger.error(f"获取任务历史失败 {user_id}: {e}")
             return []
+    
+    async def _save_to_local_storage(self, user_id: str, config: Dict[str, Any]) -> bool:
+        """保存到本地存储（Firebase不可用时的降级方案）"""
+        try:
+            import json
+            import os
+            
+            # 创建本地存储目录
+            local_dir = f"data/{self.bot_id}/users"
+            os.makedirs(local_dir, exist_ok=True)
+            
+            # 保存到本地文件
+            local_file = f"{local_dir}/{user_id}.json"
+            data = {
+                'config': config,
+                'bot_id': self.bot_id,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            with open(local_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"用户配置已保存到本地存储: {user_id} (Bot: {self.bot_id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"本地存储保存失败 {user_id}: {e}")
+            return False
+    
+    async def _load_from_local_storage(self, user_id: str) -> Dict[str, Any]:
+        """从本地存储加载（Firebase不可用时的降级方案）"""
+        try:
+            import json
+            import os
+            
+            local_file = f"data/{self.bot_id}/users/{user_id}.json"
+            if os.path.exists(local_file):
+                with open(local_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get('config', DEFAULT_USER_CONFIG.copy())
+            else:
+                return DEFAULT_USER_CONFIG.copy()
+                
+        except Exception as e:
+            logger.error(f"本地存储加载失败 {user_id}: {e}")
+            return DEFAULT_USER_CONFIG.copy()
 
 # ==================== 导出函数 ====================
 
