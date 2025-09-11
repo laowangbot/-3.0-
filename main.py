@@ -100,6 +100,9 @@ class TelegramBot:
         self.user_api_manager = None
         self.user_api_logged_in = False
         
+        # 初始化用户状态管理
+        self.user_states = {}  # 存储用户状态
+        
         # 加载User API登录状态
         self._load_user_api_status()
     
@@ -2660,8 +2663,17 @@ class TelegramBot:
         """异步更新菜单详细信息"""
         try:
             # 获取用户统计信息
-            channel_pairs = await self.data_manager.get_channel_pairs(user_id)
-            user_config = await self.data_manager.get_user_config(user_id)
+            try:
+                channel_pairs = await self.data_manager.get_channel_pairs(user_id)
+            except Exception as e:
+                logger.error(f"获取频道组列表失败 {user_id}: {e}")
+                channel_pairs = []
+            
+            try:
+                user_config = await self.data_manager.get_user_config(user_id)
+            except Exception as e:
+                logger.error(f"获取用户配置失败 {user_id}: {e}")
+                user_config = {}
             
             # 获取 API 模式状态
             api_mode_status = ""

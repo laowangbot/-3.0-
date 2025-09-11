@@ -595,11 +595,38 @@ class MultiBotDataManager:
                 'timestamp': datetime.now().isoformat()
             }
 
+    async def get_task_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """获取用户任务历史"""
+        try:
+            if not self.initialized:
+                return []
+            
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager:
+                tasks_data = await self.optimized_manager.get_document('users', str(user_id))
+                if tasks_data and 'tasks' in tasks_data:
+                    tasks = tasks_data['tasks']
+                    # 按创建时间排序，返回最新的任务
+                    sorted_tasks = sorted(tasks.values(), key=lambda x: x.get('created_at', 0), reverse=True)
+                    return sorted_tasks[:limit]
+                return []
+            else:
+                # 使用标准Firebase连接
+                if self.db:
+                    tasks_ref = self.db.collection('bots').document(self.bot_id).collection('users').document(str(user_id)).collection('tasks')
+                    query = tasks_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit)
+                    docs = await query.get()
+                    return [doc.to_dict() for doc in docs]
+                return []
+        except Exception as e:
+            logger.error(f"获取任务历史失败 {user_id}: {e}")
+            return []
+
 # ==================== 导出函数 ====================
 
-def create_multi_bot_data_manager(bot_id: str, use_batch_storage: bool = True) -> MultiBotDataManager:
+def create_multi_bot_data_manager(bot_id: str, use_batch_storage: bool = True) -> MultiBotDataManager:                                                                                                
     """创建多机器人数据管理器实例
-    
+
     Args:
         bot_id: 机器人ID
         use_batch_storage: 是否使用批量存储，默认True
