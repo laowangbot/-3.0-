@@ -1098,10 +1098,10 @@ class CloningEngine:
             
             logger.info(f"🔄 开始流式处理剩余消息: {remaining_start} - {end_id}")
             
-            # 流式处理：边获取边搬运，支持预取和动态批次调整 - User API 优化
-            batch_size = 1000  # User API: 增加初始批次大小到1000
-            min_batch_size = 500  # User API: 增加最小批次大小到500
-            max_batch_size = 2000  # User API: 增加最大批次大小到2000
+            # 流式处理：边获取边搬运，支持预取和动态批次调整 - 修复版本
+            batch_size = 200  # 修复: 减少批次大小避免跳过消息
+            min_batch_size = 100  # 修复: 减少最小批次大小
+            max_batch_size = 500  # 修复: 减少最大批次大小
             current_id = remaining_start
             
             # 预取缓存设置
@@ -1147,7 +1147,45 @@ class CloningEngine:
                     valid_messages = [msg for msg in batch_messages if msg is not None]
                     
                     if not valid_messages:
-                        logger.info(f"批次 {current_id}-{batch_end} 没有有效消息，跳过")
+                        # 检查是否真的没有消息，还是批次太大导致跳过
+                        if batch_end - current_id + 1 > 100:  # 如果批次很大
+                            logger.warning(f"⚠️ 大批次 {current_id}-{batch_end} 没有有效消息，可能跳过消息")
+                            # 分成更小的批次重新检查
+                            sub_batch_size = 50
+                            sub_current = current_id
+                            found_any = False
+                            
+                            while sub_current <= batch_end:
+                                sub_end = min(sub_current + sub_batch_size - 1, batch_end)
+                                sub_message_ids = list(range(sub_current, sub_end + 1))
+                                
+                                try:
+                                    sub_messages = await self.client.get_messages(
+                                        task.source_chat_id,
+                                        message_ids=sub_message_ids
+                                    )
+                                    sub_valid = [msg for msg in sub_messages if msg is not None]
+                                    
+                                    if sub_valid:
+                                        found_any = True
+                                        logger.info(f"🔍 子批次 {sub_current}-{sub_end} 发现 {len(sub_valid)} 条消息")
+                                        # 处理这批消息
+                                        success = await self._process_message_batch(task, sub_valid, task_start_time)
+                                        if not success:
+                                            logger.warning(f"子批次 {sub_current}-{sub_end} 处理失败")
+                                    
+                                    await asyncio.sleep(0.01)  # 小延迟
+                                    
+                                except Exception as e:
+                                    logger.warning(f"子批次 {sub_current}-{sub_end} 检查失败: {e}")
+                                
+                                sub_current = sub_end + 1
+                            
+                            if not found_any:
+                                logger.info(f"✅ 确认批次 {current_id}-{batch_end} 没有有效消息")
+                        else:
+                            logger.info(f"批次 {current_id}-{batch_end} 没有有效消息，跳过")
+                        
                         current_id = batch_end + 1
                         continue
                     
@@ -1252,7 +1290,8 @@ class CloningEngine:
                     
                 except Exception as e:
                     logger.warning(f"批次 {current_id}-{batch_end} 处理失败: {e}")
-                    current_id += batch_size
+                    # 不要跳过整个批次大小，只跳过当前批次
+                    current_id = batch_end + 1
                     continue
             
             logger.info(f"🎉 流式处理完成，共处理 {processed_batches} 个批次")
