@@ -5592,16 +5592,22 @@ class TelegramBot:
                 if "MESSAGE_NOT_MODIFIED" in str(e):
                     logger.debug(f"消息内容未变化，跳过编辑: {e}")
                     # 只更新按钮，不更新文本
-                    await callback_query.edit_message_reply_markup(
-                        reply_markup=generate_button_layout([
-                            [("🔄 独立过滤开关", f"toggle_admin_independent_filters:{channel_id}")],
-                            [("🔑 关键字过滤", f"admin_channel_keywords:{channel_id}"), ("🔄 敏感词替换", f"admin_channel_replacements:{channel_id}")],
-                            [("📝 纯文本过滤", f"admin_channel_content_removal:{channel_id}"), ("🚀 增强版链接过滤", f"admin_channel_links_removal:{channel_id}")],
-                            [("👤 用户名移除", f"admin_channel_usernames_removal:{channel_id}"), ("🔘 按钮移除", f"admin_channel_buttons_removal:{channel_id}")],
-                            [("📝 添加小尾巴", f"admin_channel_tail_text:{channel_id}"), ("🔘 添加按钮", f"admin_channel_buttons:{channel_id}")],
-                            [("🔙 返回频道管理", "show_channel_admin_test")]
-                        ])
-                    )
+                    try:
+                        await callback_query.edit_message_reply_markup(
+                            reply_markup=generate_button_layout([
+                                [("🔄 独立过滤开关", f"toggle_admin_independent_filters:{channel_id}")],
+                                [("🔑 关键字过滤", f"admin_channel_keywords:{channel_id}"), ("🔄 敏感词替换", f"admin_channel_replacements:{channel_id}")],
+                                [("📝 纯文本过滤", f"admin_channel_content_removal:{channel_id}"), ("🚀 增强版链接过滤", f"admin_channel_links_removal:{channel_id}")],
+                                [("👤 用户名移除", f"admin_channel_usernames_removal:{channel_id}"), ("🔘 按钮移除", f"admin_channel_buttons_removal:{channel_id}")],
+                                [("📝 添加小尾巴", f"admin_channel_tail_text:{channel_id}"), ("🔘 添加按钮", f"admin_channel_buttons:{channel_id}")],
+                                [("🔙 返回频道管理", "show_channel_admin_test")]
+                            ])
+                        )
+                    except Exception as reply_markup_error:
+                        if "MESSAGE_NOT_MODIFIED" in str(reply_markup_error):
+                            logger.debug(f"按钮也未变化，完全跳过编辑: {reply_markup_error}")
+                        else:
+                            logger.warning(f"更新按钮失败: {reply_markup_error}")
                 else:
                     raise e
             
@@ -9205,7 +9211,11 @@ https://t.me/channel_name 1-10
             admin_channels = []
             
             # 从频道数据管理器获取所有频道（包括未验证的）
-            all_channels = self.channel_data_manager.get_all_channels()
+            try:
+                all_channels = self.channel_data_manager.get_all_channels()
+            except Exception as e:
+                logger.warning(f"获取频道数据失败: {e}")
+                all_channels = []
             
             # 只在调试模式下打印详细日志
             if logger.isEnabledFor(logging.DEBUG):
@@ -9213,22 +9223,20 @@ https://t.me/channel_name 1-10
                 logger.debug(f"🔍 频道数据管理器状态: 文件={self.channel_data_manager.data_file}, 数据量={len(self.channel_data_manager.channels_data)}")
             
             for channel_data in all_channels:
-                channel_id = channel_data['id']
-                is_verified = channel_data.get('verified', False)
-                
-                if is_verified:
-                    # 已验证的频道直接添加
-                    admin_channels.append(channel_data)
-                    # 只在调试模式下打印每个频道的日志
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"📝 频道 {channel_id} 使用已验证的缓存数据")
-                else:
-                    # 未验证的频道也添加，但标记为需要验证
-                    channel_data['needs_verification'] = True
-                    admin_channels.append(channel_data)
-                    # 只在调试模式下打印每个频道的日志
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"⚠️ 频道 {channel_id} 未验证，需要重新验证")
+                try:
+                    channel_id = channel_data['id']
+                    is_verified = channel_data.get('verified', False)
+                    
+                    if is_verified:
+                        # 已验证的频道直接添加
+                        admin_channels.append(channel_data)
+                    else:
+                        # 未验证的频道也添加，但标记为需要验证
+                        channel_data['needs_verification'] = True
+                        admin_channels.append(channel_data)
+                except Exception as e:
+                    logger.warning(f"处理频道数据失败: {e}")
+                    continue
             
             # 添加已知频道（如果配置了）
             # 注意：_add_known_channels 方法不存在，暂时注释掉
