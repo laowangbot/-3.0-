@@ -5437,11 +5437,31 @@ class TelegramBot:
                 [("🔙 返回频道管理", "show_channel_admin_test")]
             ]
             
-            await self._safe_edit_message(
-                callback_query,
-                config_text,
-                generate_button_layout(buttons)
-            )
+            # 检查消息内容是否真的需要更新
+            try:
+                current_message = callback_query.message
+                if current_message and current_message.text == config_text:
+                    # 消息内容没有变化，只更新按钮
+                    logger.debug(f"消息内容未变化，只更新按钮")
+                    await callback_query.edit_message_reply_markup(
+                        reply_markup=generate_button_layout(buttons)
+                    )
+                else:
+                    # 消息内容有变化，使用安全编辑
+                    await self._safe_edit_message(
+                        callback_query,
+                        config_text,
+                        generate_button_layout(buttons)
+                    )
+            except Exception as e:
+                if "MESSAGE_NOT_MODIFIED" in str(e):
+                    logger.debug(f"消息未修改，跳过编辑: {e}")
+                    # 只更新按钮
+                    await callback_query.edit_message_reply_markup(
+                        reply_markup=generate_button_layout(buttons)
+                    )
+                else:
+                    raise e
             
         except Exception as e:
             logger.error(f"处理频道过滤配置失败: {e}")
@@ -5565,8 +5585,25 @@ class TelegramBot:
             status_text = "✅ 已启用" if channel_filters['independent_enabled'] else "❌ 已禁用"
             await callback_query.answer(f"独立过滤 {status_text}")
             
-            # 刷新过滤配置界面
-            await self._handle_admin_channel_filters(callback_query)
+            # 刷新过滤配置界面（使用安全的消息编辑）
+            try:
+                await self._handle_admin_channel_filters(callback_query)
+            except Exception as e:
+                if "MESSAGE_NOT_MODIFIED" in str(e):
+                    logger.debug(f"消息内容未变化，跳过编辑: {e}")
+                    # 只更新按钮，不更新文本
+                    await callback_query.edit_message_reply_markup(
+                        reply_markup=generate_button_layout([
+                            [("🔄 独立过滤开关", f"toggle_admin_independent_filters:{channel_id}")],
+                            [("🔑 关键字过滤", f"admin_channel_keywords:{channel_id}"), ("🔄 敏感词替换", f"admin_channel_replacements:{channel_id}")],
+                            [("📝 纯文本过滤", f"admin_channel_content_removal:{channel_id}"), ("🚀 增强版链接过滤", f"admin_channel_links_removal:{channel_id}")],
+                            [("👤 用户名移除", f"admin_channel_usernames_removal:{channel_id}"), ("🔘 按钮移除", f"admin_channel_buttons_removal:{channel_id}")],
+                            [("📝 添加小尾巴", f"admin_channel_tail_text:{channel_id}"), ("🔘 添加按钮", f"admin_channel_buttons:{channel_id}")],
+                            [("🔙 返回频道管理", "show_channel_admin_test")]
+                        ])
+                    )
+                else:
+                    raise e
             
         except Exception as e:
             logger.error(f"处理频道独立过滤切换失败: {e}")
