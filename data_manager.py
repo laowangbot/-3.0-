@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from config import FIREBASE_CREDENTIALS, FIREBASE_PROJECT_ID, DEFAULT_USER_CONFIG
+from optimized_firebase_manager import get_global_optimized_manager, get_doc, set_doc, update_doc, delete_doc
 
 # 配置日志 - 显示详细状态信息
 logging.basicConfig(level=logging.INFO)
@@ -20,15 +21,27 @@ logger = logging.getLogger(__name__)
 class DataManager:
     """数据管理器类"""
     
-    def __init__(self):
+    def __init__(self, bot_id: str = "default_bot"):
         """初始化数据管理器"""
+        self.bot_id = bot_id
         self.db = None
         self.initialized = False
+        self.optimized_manager = None
         self._init_firebase()
     
     def _init_firebase(self):
         """初始化Firebase连接"""
         try:
+            # 尝试使用优化的Firebase管理器
+            self.optimized_manager = get_global_optimized_manager(self.bot_id)
+            if self.optimized_manager and self.optimized_manager.initialized:
+                self.initialized = True
+                logger.info(f"✅ 使用优化的Firebase管理器 (Bot: {self.bot_id})")
+                return
+            
+            # 回退到标准Firebase连接
+            logger.warning("⚠️ 优化的Firebase管理器不可用，使用标准Firebase连接")
+            
             # 获取配置
             from config import get_config
             config = get_config()
@@ -124,25 +137,39 @@ class DataManager:
             return DEFAULT_USER_CONFIG.copy()
         
         try:
-            # 使用异步方式获取文档
-            import asyncio
-            doc_ref = self.db.collection('users').document(str(user_id))
-            
-            # 在线程池中执行同步操作
-            loop = asyncio.get_event_loop()
-            doc = await loop.run_in_executor(None, doc_ref.get)
-            
-            if doc.exists:
-                user_data = doc.to_dict()
-                config = user_data.get('config', {})
-                # 合并默认配置和用户配置
-                merged_config = DEFAULT_USER_CONFIG.copy()
-                merged_config.update(config)
-                return merged_config
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager:
+                user_data = await self.optimized_manager.get_document('users', str(user_id))
+                if user_data:
+                    config = user_data.get('config', {})
+                    # 合并默认配置和用户配置
+                    merged_config = DEFAULT_USER_CONFIG.copy()
+                    merged_config.update(config)
+                    return merged_config
+                else:
+                    # 创建新用户配置
+                    await self.create_user_config(user_id)
+                    return DEFAULT_USER_CONFIG.copy()
             else:
-                # 创建新用户配置
-                await self.create_user_config(user_id)
-                return DEFAULT_USER_CONFIG.copy()
+                # 回退到标准Firebase操作
+                import asyncio
+                doc_ref = self.db.collection('users').document(str(user_id))
+                
+                # 在线程池中执行同步操作
+                loop = asyncio.get_event_loop()
+                doc = await loop.run_in_executor(None, doc_ref.get)
+                
+                if doc.exists:
+                    user_data = doc.to_dict()
+                    config = user_data.get('config', {})
+                    # 合并默认配置和用户配置
+                    merged_config = DEFAULT_USER_CONFIG.copy()
+                    merged_config.update(config)
+                    return merged_config
+                else:
+                    # 创建新用户配置
+                    await self.create_user_config(user_id)
+                    return DEFAULT_USER_CONFIG.copy()
                 
         except Exception as e:
             logger.error(f"获取用户配置失败 {user_id}: {e}")
@@ -154,28 +181,53 @@ class DataManager:
             return False
         
         try:
-            import asyncio
-            doc_ref = self.db.collection('users').document(str(user_id))
-            
-            # 获取现有配置
-            loop = asyncio.get_event_loop()
-            existing_doc = await loop.run_in_executor(None, doc_ref.get)
-            if existing_doc.exists:
-                existing_data = existing_doc.to_dict()
-                # 完全替换config字段，而不是合并
-                existing_data['config'] = config
-                existing_data['updated_at'] = datetime.now().isoformat()
-                await loop.run_in_executor(None, doc_ref.set, existing_data)
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager:
+                # 获取现有配置
+                existing_data = await self.optimized_manager.get_document('users', str(user_id))
+                if existing_data:
+                    # 完全替换config字段，而不是合并
+                    existing_data['config'] = config
+                    existing_data['updated_at'] = datetime.now().isoformat()
+                    success = await self.optimized_manager.set_document('users', str(user_id), existing_data)
+                else:
+                    # 新用户，直接设置
+                    user_data = {
+                        'config': config,
+                        'updated_at': datetime.now().isoformat()
+                    }
+                    success = await self.optimized_manager.set_document('users', str(user_id), user_data)
+                
+                if success:
+                    logger.info(f"用户配置保存成功: {user_id}")
+                    return True
+                else:
+                    logger.error(f"用户配置保存失败: {user_id}")
+                    return False
             else:
-                # 新用户，直接设置
-                user_data = {
-                    'config': config,
-                    'updated_at': datetime.now().isoformat()
-                }
-                await loop.run_in_executor(None, doc_ref.set, user_data)
-            
-            logger.info(f"用户配置保存成功: {user_id}")
-            return True
+                # 回退到标准Firebase操作
+                import asyncio
+                doc_ref = self.db.collection('users').document(str(user_id))
+                
+                # 获取现有配置
+                loop = asyncio.get_event_loop()
+                existing_doc = await loop.run_in_executor(None, doc_ref.get)
+                if existing_doc.exists:
+                    existing_data = existing_doc.to_dict()
+                    # 完全替换config字段，而不是合并
+                    existing_data['config'] = config
+                    existing_data['updated_at'] = datetime.now().isoformat()
+                    await loop.run_in_executor(None, doc_ref.set, existing_data)
+                else:
+                    # 新用户，直接设置
+                    user_data = {
+                        'config': config,
+                        'updated_at': datetime.now().isoformat()
+                    }
+                    await loop.run_in_executor(None, doc_ref.set, user_data)
+                
+                logger.info(f"用户配置保存成功: {user_id}")
+                return True
             
         except Exception as e:
             logger.error(f"保存用户配置失败 {user_id}: {e}")
@@ -191,17 +243,25 @@ class DataManager:
             return []
         
         try:
-            import asyncio
-            # 获取所有用户文档
-            loop = asyncio.get_event_loop()
-            docs = await loop.run_in_executor(None, lambda: list(self.db.collection('users').stream()))
-            
-            user_ids = []
-            for doc in docs:
-                user_ids.append(doc.id)
-            
-            logger.info(f"📂 获取到 {len(user_ids)} 个用户ID")
-            return user_ids
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager:
+                users = await self.optimized_manager.get_collection('users')
+                user_ids = [doc.get('_id', doc.get('id', '')) for doc in users if doc.get('_id') or doc.get('id')]
+                logger.info(f"📂 获取到 {len(user_ids)} 个用户ID")
+                return user_ids
+            else:
+                # 回退到标准Firebase操作
+                import asyncio
+                # 获取所有用户文档
+                loop = asyncio.get_event_loop()
+                docs = await loop.run_in_executor(None, lambda: list(self.db.collection('users').stream()))
+                
+                user_ids = []
+                for doc in docs:
+                    user_ids.append(doc.id)
+                
+                logger.info(f"📂 获取到 {len(user_ids)} 个用户ID")
+                return user_ids
             
         except Exception as e:
             logger.error(f"获取所有用户ID失败: {e}")
@@ -624,16 +684,26 @@ class DataManager:
             }
 
 # 全局数据管理器实例
-data_manager = DataManager()
+# 全局数据管理器实例将在需要时创建
+data_manager = None
+
+def get_data_manager(bot_id: str = "default_bot") -> DataManager:
+    """获取数据管理器实例"""
+    global data_manager
+    if data_manager is None:
+        data_manager = DataManager(bot_id)
+    return data_manager
 
 # ==================== 导出函数 ====================
-async def get_user_config(user_id: str) -> Dict[str, Any]:
+async def get_user_config(user_id: str, bot_id: str = "default_bot") -> Dict[str, Any]:
     """获取用户配置"""
-    return await data_manager.get_user_config(user_id)
+    manager = get_data_manager(bot_id)
+    return await manager.get_user_config(user_id)
 
-async def save_user_config(user_id: str, config: Dict[str, Any]) -> bool:
+async def save_user_config(user_id: str, config: Dict[str, Any], bot_id: str = "default_bot") -> bool:
     """保存用户配置"""
-    return await data_manager.save_user_config(user_id, config)
+    manager = get_data_manager(bot_id)
+    return await manager.save_user_config(user_id, config)
 
 async def get_channel_pairs(user_id: str) -> List[Dict[str, Any]]:
     """获取频道组列表"""

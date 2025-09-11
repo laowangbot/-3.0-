@@ -13,6 +13,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from config import DEFAULT_USER_CONFIG
 from firebase_batch_storage import get_global_batch_storage, batch_set, batch_update, batch_delete
+from optimized_firebase_manager import get_global_optimized_manager, get_doc, set_doc, update_doc, delete_doc
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class MultiBotDataManager:
         self.bot_id = bot_id
         self.db = None
         self.initialized = False
+        self.optimized_manager = None
         
         # 从配置中读取批量存储设置
         if use_batch_storage is None:
@@ -43,6 +45,16 @@ class MultiBotDataManager:
     def _init_firebase(self):
         """初始化Firebase连接"""
         try:
+            # 尝试使用优化的Firebase管理器
+            self.optimized_manager = get_global_optimized_manager(self.bot_id)
+            if self.optimized_manager and self.optimized_manager.initialized:
+                self.initialized = True
+                logger.info(f"✅ 使用优化的Firebase管理器 (Bot: {self.bot_id})")
+                return
+            
+            # 回退到标准Firebase连接
+            logger.warning("⚠️ 优化的Firebase管理器不可用，使用标准Firebase连接")
+            
             # 获取配置
             from config import get_config
             config = get_config()
@@ -163,20 +175,35 @@ class MultiBotDataManager:
             return DEFAULT_USER_CONFIG.copy()
         
         try:
-            doc_ref = self._get_user_doc_ref(user_id)
-            doc = doc_ref.get()
-            
-            if doc.exists:
-                user_data = doc.to_dict()
-                config = user_data.get('config', {})
-                # 合并默认配置和用户配置
-                merged_config = DEFAULT_USER_CONFIG.copy()
-                merged_config.update(config)
-                return merged_config
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager:
+                user_data = await self.optimized_manager.get_document('users', str(user_id))
+                if user_data:
+                    config = user_data.get('config', {})
+                    # 合并默认配置和用户配置
+                    merged_config = DEFAULT_USER_CONFIG.copy()
+                    merged_config.update(config)
+                    return merged_config
+                else:
+                    # 创建新用户配置
+                    await self.create_user_config(user_id)
+                    return DEFAULT_USER_CONFIG.copy()
             else:
-                # 创建新用户配置
-                await self.create_user_config(user_id)
-                return DEFAULT_USER_CONFIG.copy()
+                # 回退到标准Firebase操作
+                doc_ref = self._get_user_doc_ref(user_id)
+                doc = doc_ref.get()
+                
+                if doc.exists:
+                    user_data = doc.to_dict()
+                    config = user_data.get('config', {})
+                    # 合并默认配置和用户配置
+                    merged_config = DEFAULT_USER_CONFIG.copy()
+                    merged_config.update(config)
+                    return merged_config
+                else:
+                    # 创建新用户配置
+                    await self.create_user_config(user_id)
+                    return DEFAULT_USER_CONFIG.copy()
                 
         except Exception as e:
             logger.error(f"获取用户配置失败 {user_id}: {e}")
@@ -188,17 +215,11 @@ class MultiBotDataManager:
             return False
         
         try:
-            # 如果使用批量存储，添加到批量队列
-            if self.use_batch_storage:
-                collection = f"bots/{self.bot_id}/users"
-                document = str(user_id)
-                
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager:
                 # 获取现有配置
-                doc_ref = self._get_user_doc_ref(user_id)
-                existing_doc = doc_ref.get()
-                
-                if existing_doc.exists:
-                    existing_data = existing_doc.to_dict()
+                existing_data = await self.optimized_manager.get_document('users', str(user_id))
+                if existing_data:
                     existing_data['config'] = config
                     existing_data['updated_at'] = datetime.now().isoformat()
                     data = existing_data
@@ -210,13 +231,45 @@ class MultiBotDataManager:
                         'updated_at': datetime.now().isoformat()
                     }
                 
-                # 添加到批量存储队列
-                await batch_set(collection, document, data, self.bot_id)
-                logger.info(f"用户配置已加入批量存储队列: {user_id} (Bot: {self.bot_id})")
-                return True
+                # 使用优化的Firebase管理器保存
+                success = await self.optimized_manager.set_document('users', str(user_id), data)
+                if success:
+                    logger.info(f"用户配置保存成功: {user_id} (Bot: {self.bot_id})")
+                    return True
+                else:
+                    logger.error(f"用户配置保存失败: {user_id} (Bot: {self.bot_id})")
+                    return False
             else:
-                # 实时存储
-                doc_ref = self._get_user_doc_ref(user_id)
+                # 回退到标准Firebase操作
+                # 如果使用批量存储，添加到批量队列
+                if self.use_batch_storage:
+                    collection = f"bots/{self.bot_id}/users"
+                    document = str(user_id)
+                    
+                    # 获取现有配置
+                    doc_ref = self._get_user_doc_ref(user_id)
+                    existing_doc = doc_ref.get()
+                    
+                    if existing_doc.exists:
+                        existing_data = existing_doc.to_dict()
+                        existing_data['config'] = config
+                        existing_data['updated_at'] = datetime.now().isoformat()
+                        data = existing_data
+                    else:
+                        data = {
+                            'config': config,
+                            'bot_id': self.bot_id,
+                            'created_at': datetime.now().isoformat(),
+                            'updated_at': datetime.now().isoformat()
+                        }
+                    
+                    # 添加到批量存储队列
+                    await batch_set(collection, document, data, self.bot_id)
+                    logger.info(f"用户配置已加入批量存储队列: {user_id} (Bot: {self.bot_id})")
+                    return True
+                else:
+                    # 实时存储
+                    doc_ref = self._get_user_doc_ref(user_id)
                 
                 # 获取现有配置
                 existing_doc = doc_ref.get()

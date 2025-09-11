@@ -15,6 +15,7 @@ from pyrogram.errors import FloodWait
 from message_engine import MessageEngine
 from data_manager import get_user_config, data_manager
 from config import DEFAULT_USER_CONFIG
+from task_state_manager import get_global_task_state_manager, TaskStatus
 
 # 配置日志 - 使用优化的日志配置
 from log_config import get_logger
@@ -25,7 +26,7 @@ class CloneTask:
     
     def __init__(self, task_id: str, source_chat_id: str, target_chat_id: str,
                  start_id: Optional[int] = None, end_id: Optional[int] = None,
-                 config: Optional[Dict[str, Any]] = None):
+                 config: Optional[Dict[str, Any]] = None, user_id: str = None):
         """初始化搬运任务"""
         self.task_id = task_id
         self.source_chat_id = source_chat_id
@@ -33,6 +34,7 @@ class CloneTask:
         self.start_id = start_id
         self.end_id = end_id
         self.config = config or {}
+        self.user_id = user_id
         
         # 任务状态
         self.status = "pending"  # pending, running, completed, failed, paused, cancelled
@@ -63,6 +65,11 @@ class CloneTask:
             'filtered_messages': 0,
             'media_groups': 0
         }
+        
+        # 任务状态管理器
+        self.task_state_manager = get_global_task_state_manager()
+        self._last_save_time = 0
+        self._save_interval = 10  # 10秒保存一次进度
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
@@ -103,6 +110,58 @@ class CloneTask:
         """保存当前进度"""
         self.last_processed_message_id = message_id
         self.current_message_id = message_id
+        
+        # 异步保存到数据库
+        asyncio.create_task(self._async_save_progress())
+    
+    async def _async_save_progress(self):
+        """异步保存进度"""
+        try:
+            current_time = time.time()
+            if current_time - self._last_save_time < self._save_interval:
+                return  # 保存间隔未到
+            
+            # 更新任务状态
+            await self.task_state_manager.update_task_progress(
+                self.task_id,
+                status=TaskStatus(self.status),
+                progress=self.progress,
+                current_message_id=self.current_message_id,
+                total_messages=self.total_messages,
+                processed_messages=self.processed_messages,
+                failed_messages=self.failed_messages,
+                last_processed_message_id=self.last_processed_message_id,
+                stats=self.stats
+            )
+            
+            self._last_save_time = current_time
+            logger.debug(f"任务进度已保存: {self.task_id}")
+            
+        except Exception as e:
+            logger.error(f"保存任务进度失败 {self.task_id}: {e}")
+    
+    async def save_final_state(self):
+        """保存最终状态"""
+        try:
+            await self.task_state_manager.update_task_progress(
+                self.task_id,
+                status=TaskStatus(self.status),
+                progress=self.progress,
+                current_message_id=self.current_message_id,
+                total_messages=self.total_messages,
+                processed_messages=self.processed_messages,
+                failed_messages=self.failed_messages,
+                last_processed_message_id=self.last_processed_message_id,
+                end_time=self.end_time,
+                stats=self.stats
+            )
+            
+            # 立即保存
+            await self.task_state_manager.save_task_progress(self.task_id)
+            logger.info(f"任务最终状态已保存: {self.task_id}")
+            
+        except Exception as e:
+            logger.error(f"保存任务最终状态失败 {self.task_id}: {e}")
     
     def prepare_for_resume(self, from_message_id: int):
         """准备断点续传"""
@@ -113,14 +172,18 @@ class CloneTask:
 class CloningEngine:
     """搬运引擎类"""
     
-    def __init__(self, client: Client, config: Dict[str, Any], data_manager=None):
+    def __init__(self, client: Client, config: Dict[str, Any], data_manager=None, bot_id: str = "default_bot"):
         """初始化搬运引擎"""
         self.client = client
         self.config = config
         self.data_manager = data_manager
+        self.bot_id = bot_id
         self.message_engine = MessageEngine(config)
         self.active_tasks: Dict[str, CloneTask] = {}
         self.task_history: List[Dict[str, Any]] = []
+        
+        # 任务状态管理器
+        self.task_state_manager = get_global_task_state_manager(bot_id)
         
         # 记录客户端类型
         self.client_type = type(client).__name__
@@ -876,6 +939,18 @@ class CloningEngine:
                 return False
         
         try:
+            # 创建任务状态记录
+            if task.user_id:
+                await self.task_state_manager.create_task(
+                    task_id=task.task_id,
+                    user_id=task.user_id,
+                    source_chat_id=task.source_chat_id,
+                    target_chat_id=task.target_chat_id,
+                    start_id=task.start_id,
+                    end_id=task.end_id,
+                    config=task.config
+                )
+            
             # 将任务添加到活动任务列表
             logger.info(f"🔧 [DEBUG] 添加任务到活动列表: {task.task_id}")
             self.active_tasks[task.task_id] = task
@@ -883,6 +958,14 @@ class CloningEngine:
             logger.info(f"🔧 [DEBUG] 设置任务状态为running: {task.task_id}")
             task.status = "running"
             task.start_time = datetime.now()
+            
+            # 更新任务状态到数据库
+            if task.user_id:
+                await self.task_state_manager.update_task_progress(
+                    task.task_id,
+                    status=TaskStatus.RUNNING,
+                    start_time=task.start_time
+                )
             
             logger.info(f"🔧 [DEBUG] 开始搬运任务: {task.task_id}")
             
@@ -964,6 +1047,9 @@ class CloningEngine:
             
             task.end_time = datetime.now()
             
+            # 保存最终状态到数据库
+            await task.save_final_state()
+            
             # 保存到历史记录
             self.task_history.append(task.to_dict())
             
@@ -992,6 +1078,9 @@ class CloningEngine:
             logger.error(f"后台执行搬运任务失败: {e}")
             task.status = "failed"
             task.end_time = datetime.now()
+            
+            # 保存最终状态到数据库
+            await task.save_final_state()
             
             # 清理后台任务引用
             if task.task_id in self.background_tasks:
@@ -2640,9 +2729,9 @@ class CloningEngine:
             logger.error(f"停止所有任务失败: {e}")
 
 # ==================== 导出函数 ====================
-def create_cloning_engine(client: Client, config: Dict[str, Any], data_manager=None) -> CloningEngine:
+def create_cloning_engine(client: Client, config: Dict[str, Any], data_manager=None, bot_id: str = "default_bot") -> CloningEngine:
     """创建搬运引擎实例"""
-    return CloningEngine(client, config, data_manager)
+    return CloningEngine(client, config, data_manager, bot_id)
 
 __all__ = [
     "CloneTask", "CloningEngine", "create_cloning_engine"

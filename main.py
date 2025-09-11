@@ -30,6 +30,7 @@ from pyrogram.errors import FloodWait, RPCError
 from config import get_config, validate_config, DEFAULT_USER_CONFIG
 from multi_bot_data_manager import create_multi_bot_data_manager
 from local_data_manager import create_local_data_manager
+from optimized_firebase_manager import get_global_optimized_manager, start_optimization_services
 from ui_layouts import (
     generate_button_layout, MAIN_MENU_BUTTONS_WITH_USER_API, 
     MAIN_MENU_BUTTONS_USER_API_LOGGED_IN, CHANNEL_MANAGEMENT_BUTTONS,
@@ -39,6 +40,7 @@ from ui_layouts import (
 from channel_data_manager import ChannelDataManager
 from message_engine import create_message_engine
 from cloning_engine import create_cloning_engine, CloneTask
+from task_state_manager import start_task_state_manager, stop_task_state_manager
 from web_server import create_web_server
 from user_api_manager import get_user_api_manager, UserAPIManager
 
@@ -333,13 +335,21 @@ class TelegramBot:
             self.channel_client = None  # 不再预先设置，使用_get_api_client()动态获取
             logger.info("✅ 频道管理客户端初始化成功（动态模式）")
             
+            # 启动任务状态管理器
+            try:
+                await start_task_state_manager(self.bot_id)
+                logger.info("✅ 任务状态管理器已启动")
+            except Exception as e:
+                logger.warning(f"⚠️ 启动任务状态管理器失败: {e}")
+                logger.warning("💡 将使用内存模式，任务状态可能不会持久化")
+            
             # 初始化搬运引擎（优先使用 User API，如果未登录则使用 Bot API）
             if self.user_api_logged_in and self.user_api_manager and self.user_api_manager.client:
                 logger.info("🔧 使用 User API 初始化搬运引擎")
-                self.cloning_engine = create_cloning_engine(self.user_api_manager.client, self.config, self.data_manager)
+                self.cloning_engine = create_cloning_engine(self.user_api_manager.client, self.config, self.data_manager, self.bot_id)
             else:
                 logger.info("🔧 使用 Bot API 初始化搬运引擎")
-                self.cloning_engine = create_cloning_engine(self.client, self.config, self.data_manager)
+                self.cloning_engine = create_cloning_engine(self.client, self.config, self.data_manager, self.bot_id)
             logger.info("✅ 搬运引擎初始化成功")
             
             # 设置进度回调函数
@@ -410,14 +420,24 @@ class TelegramBot:
             
             logger.info(f"🔍 User API 管理器最终状态: {self.user_api_manager is not None}, 登录状态: {self.user_api_logged_in}")
             
-            # 启动批量存储处理器（如果使用Firebase存储）
+            # 启动Firebase优化服务（如果使用Firebase存储）
             if not self.config.get('use_local_storage', False):
                 try:
-                    from firebase_batch_storage import start_batch_processing
-                    await start_batch_processing(self.bot_id)
-                    logger.info("✅ Firebase批量存储处理器已启动")
+                    # 启动完整的Firebase优化服务
+                    await start_optimization_services(self.bot_id)
+                    logger.info("✅ Firebase优化服务已启动（批量存储+缓存+配额监控）")
+                    
+                    # 获取优化统计信息
+                    manager = get_global_optimized_manager(self.bot_id)
+                    if manager:
+                        stats = manager.get_optimization_stats()
+                        logger.info(f"📊 Firebase优化状态:")
+                        logger.info(f"   批量存储: {'启用' if stats.get('use_batch_storage') else '禁用'}")
+                        logger.info(f"   缓存系统: {'启用' if stats.get('use_cache') else '禁用'}")
+                        logger.info(f"   配额监控: {'启用' if stats.get('use_quota_monitoring') else '禁用'}")
                 except Exception as e:
-                    logger.warning(f"⚠️ 启动批量存储处理器失败: {e}")
+                    logger.warning(f"⚠️ 启动Firebase优化服务失败: {e}")
+                    logger.warning("💡 将使用标准Firebase操作，可能影响配额使用")
             
             logger.info("✅ 核心系统初始化成功")
             
@@ -8019,7 +8039,7 @@ https://t.me/channel_name 1-10
             from cloning_engine import CloningEngine
             
             # 创建搬运引擎实例
-            clone_engine = CloningEngine(self.client, self.config, self.data_manager)
+            clone_engine = CloningEngine(self.client, self.config, self.data_manager, self.bot_id)
             self.cloning_engine = clone_engine  # 存储为实例变量
             
             # 统计信息
