@@ -2609,21 +2609,42 @@ class CloningEngine:
                 return True
             
             # 按消息ID排序，确保按时间顺序处理
-            messages.sort(key=lambda m: m.id if m and hasattr(m, 'id') and m.id is not None else 0)
-            logger.info(f"📊 消息已按ID排序，确保时间顺序处理")
+            try:
+                # 添加调试信息
+                logger.debug(f"🔍 开始排序 {len(messages)} 条消息")
+                for i, msg in enumerate(messages[:3]):  # 只检查前3条
+                    logger.debug(f"🔍 消息 {i}: type={type(msg)}, id={getattr(msg, 'id', 'NO_ID')}, hasattr_id={hasattr(msg, 'id')}")
+                
+                messages.sort(key=lambda m: m.id if m and hasattr(m, 'id') and m.id is not None else 0)
+                logger.info(f"📊 消息已按ID排序，确保时间顺序处理")
+            except Exception as e:
+                logger.error(f"❌ 消息排序失败: {e}")
+                logger.error(f"❌ 错误类型: {type(e).__name__}")
+                # 使用更安全的排序方法
+                try:
+                    messages.sort(key=lambda m: getattr(m, 'id', 0) if m else 0)
+                    logger.info(f"📊 使用备用排序方法成功")
+                except Exception as e2:
+                    logger.error(f"❌ 备用排序方法也失败: {e2}")
+                    # 最后的手段：不排序
+                    logger.warning(f"⚠️ 跳过消息排序，保持原始顺序")
             
             # 记录消息ID范围，用于验证顺序
             if messages:
-                first_id = min(msg.id for msg in messages if hasattr(msg, 'id') and msg.id)
-                last_id = max(msg.id for msg in messages if hasattr(msg, 'id') and msg.id)
-                logger.info(f"📋 消息ID范围: {first_id} - {last_id} (共 {len(messages)} 条)")
-                
-                # 显示前5条和后5条消息的ID，用于验证顺序
-                if len(messages) >= 5:
-                    first_5_ids = [msg.id for msg in messages[:5] if hasattr(msg, 'id') and msg.id]
-                    last_5_ids = [msg.id for msg in messages[-5:] if hasattr(msg, 'id') and msg.id]
-                    logger.info(f"📋 前5条消息ID: {first_5_ids}")
-                    logger.info(f"📋 后5条消息ID: {last_5_ids}")
+                try:
+                    first_id = min(msg.id for msg in messages if hasattr(msg, 'id') and msg.id is not None)
+                    last_id = max(msg.id for msg in messages if hasattr(msg, 'id') and msg.id is not None)
+                    logger.info(f"📋 消息ID范围: {first_id} - {last_id} (共 {len(messages)} 条)")
+                    
+                    # 显示前5条和后5条消息的ID，用于验证顺序
+                    if len(messages) >= 5:
+                        first_5_ids = [msg.id for msg in messages[:5] if hasattr(msg, 'id') and msg.id is not None]
+                        last_5_ids = [msg.id for msg in messages[-5:] if hasattr(msg, 'id') and msg.id is not None]
+                        logger.info(f"📋 前5条消息ID: {first_5_ids}")
+                        logger.info(f"📋 后5条消息ID: {last_5_ids}")
+                except Exception as e:
+                    logger.error(f"❌ 计算消息ID范围失败: {e}")
+                    logger.info(f"📋 消息数量: {len(messages)} 条")
             
             # 按媒体组分组处理消息，但保持原始顺序
             media_groups = {}
@@ -2670,13 +2691,31 @@ class CloningEngine:
             # 添加媒体组到队列（按媒体组中最早消息的ID排序）
             for media_group_id, group_messages in media_groups.items():
                 # 按消息ID排序媒体组内的消息
-                group_messages.sort(key=lambda m: m.id if hasattr(m, 'id') and m.id is not None else 0)
+                try:
+                    group_messages.sort(key=lambda m: m.id if hasattr(m, 'id') and m.id is not None else 0)
+                except Exception as e:
+                    logger.error(f"❌ 媒体组消息排序失败: {e}")
+                    group_messages.sort(key=lambda m: getattr(m, 'id', 0) if m else 0)
+                
                 # 使用媒体组中最早消息的ID作为排序键
-                earliest_id = min(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
+                try:
+                    earliest_id = min(msg.id for msg in group_messages if hasattr(msg, 'id') and msg.id is not None)
+                except Exception as e:
+                    logger.error(f"❌ 获取媒体组最早消息ID失败: {e}")
+                    earliest_id = 0
                 message_queue.append(('media_group', media_group_id, group_messages, earliest_id))
             
             # 按消息ID排序队列
-            message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (x[1].id if hasattr(x[1], 'id') and x[1].id is not None else 0))
+            try:
+                message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (x[1].id if hasattr(x[1], 'id') and x[1].id is not None else 0))
+            except Exception as e:
+                logger.error(f"❌ 消息队列排序失败: {e}")
+                # 使用更安全的排序方法
+                try:
+                    message_queue.sort(key=lambda x: x[-1] if len(x) > 1 else (getattr(x[1], 'id', 0) if hasattr(x[1], 'id') else 0))
+                except Exception as e2:
+                    logger.error(f"❌ 备用队列排序方法也失败: {e2}")
+                    logger.warning(f"⚠️ 跳过消息队列排序，保持原始顺序")
             
             logger.info(f"📋 消息队列已排序，共 {len(message_queue)} 个处理项")
             
