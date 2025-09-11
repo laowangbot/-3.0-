@@ -201,3 +201,4 @@ if not valid_messages:
 ```python
 logger.info(f"🔍 最终检查: 处理了 {task.processed_messages} 条消息")
 ```
+

@@ -243,3 +243,4 @@ if __name__ == "__main__":
     # 显示补丁代码
     print("\n补丁代码:")
     print(apply_cloning_patch())
+

@@ -190,3 +190,4 @@ logger.info(f"消息ID范围: {min(actual_message_ids)} - {max(actual_message_id
 
 3. **进度验证**：
 - 确保进度条准确反映实际处理情况
+

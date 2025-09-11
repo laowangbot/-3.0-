@@ -11,7 +11,7 @@ from typing import List, Tuple, Dict, Any
 MAIN_MENU_BUTTONS_WITH_USER_API = [
     [
         ("🚀 搬运管理", "show_clone_test"),
-        ("📡 监听测试", "show_monitor_test")
+        ("📡 监听管理", "show_monitor_menu")
     ],
     [
         ("📋 频道管理", "show_channel_admin_test"),
@@ -35,7 +35,7 @@ MAIN_MENU_BUTTONS_WITH_USER_API = [
 MAIN_MENU_BUTTONS_USER_API_LOGGED_IN = [
     [
         ("🚀 搬运管理", "show_clone_test"),
-        ("📡 监听测试", "show_monitor_test")
+        ("📡 监听管理", "show_monitor_menu")
     ],
     [
         ("📋 频道管理", "show_channel_admin_test"),
@@ -164,20 +164,66 @@ BUTTON_FREQUENCY_BUTTONS = [
     [("🔙 返回频率设置", "show_frequency_settings")]
 ]
 
+# ==================== 监听管理按钮布局（分批轮换版本）====================
+MONITOR_MENU_BUTTONS = [
+    [("📡 我的监听任务", "view_monitoring_tasks")],
+    [("➕ 创建监听任务", "create_monitoring_task")],
+    [("🔍 监听状态", "check_monitoring_status")],
+    [("⚙️ 监听设置", "monitor_settings")],
+    [("🔙 返回主菜单", "show_main_menu")]
+]
+
+# ==================== 监听任务管理按钮布局 ====================
+MONITORING_TASKS_BUTTONS = [
+    # 监听任务列表按钮（动态生成）
+    [
+        ("➕ 新建监听任务", "create_monitoring_task"),
+        ("🔄 刷新列表", "view_monitoring_tasks")
+    ],
+    [("🔙 返回监听菜单", "show_monitor_menu")]
+]
+
+# ==================== 创建监听任务按钮布局 ====================
+CREATE_MONITORING_TASK_BUTTONS = [
+    [("🎯 选择目标频道", "select_monitor_target_channel")],
+    [("📡 添加源频道", "add_monitor_source_channel")],
+    [("⚙️ 监听设置", "configure_monitor_settings")],
+    [("✅ 创建任务", "confirm_create_monitoring_task")],
+    [("🔙 返回监听菜单", "show_monitor_menu")]
+]
+
+# ==================== 监听任务详情按钮布局 ====================
+MONITORING_TASK_DETAIL_BUTTONS = [
+    [("▶️ 启动监听", "start_monitoring_task:{task_id}")],
+    [("⏸️ 暂停监听", "pause_monitoring_task:{task_id}")],
+    [("⏹️ 停止监听", "stop_monitoring_task:{task_id}")],
+    [("✏️ 编辑任务", "edit_monitoring_task:{task_id}")],
+    [("🔢 设置起始消息ID", "set_monitoring_start_id:{task_id}")],
+    [("🗑️ 删除任务", "delete_monitoring_task:{task_id}")],
+    [("🔙 返回任务列表", "view_monitoring_tasks")]
+]
+
+# ==================== 监听设置按钮布局 ====================
+MONITOR_CONFIG_BUTTONS = [
+    [("📊 分批设置", "configure_batch_settings")],
+    [("⏰ 检查间隔: {interval}秒", "set_monitor_interval")],
+    [("🔄 重试次数: {retries}次", "set_monitor_retries")],
+    [("⏱️ 重试延迟: {delay}秒", "set_monitor_retry_delay")],
+    [("🔙 返回监听菜单", "show_monitor_menu")]
+]
+
+# ==================== 分批设置按钮布局 ====================
+BATCH_SETTINGS_BUTTONS = [
+    [("📦 批次大小: {batch_size}个频道", "set_batch_size")],
+    [("⏱️ 检查间隔: {interval}秒", "set_batch_interval")],
+    [("🔧 高级设置", "advanced_batch_settings")],
+    [("🔙 返回监听设置", "monitor_settings")]
+]
 
 # ==================== 任务确认按钮布局 ====================
 TASK_CONFIRMATION_BUTTONS = [
     [("✅ 确认开始搬运 ({task_count} 组频道)", "confirm_clone_action:{task_id}")],
     [("❌ 取消", "cancel:{task_id}")]
-]
-
-# ==================== 监听测试按钮布局 ====================
-MONITOR_TEST_BUTTONS = [
-    [("➕ 开始监听", "start_monitor_test")],
-    [("📋 我的监听", "view_monitor_tasks")],
-    [("⏹️ 停止监听", "stop_monitor_test")],
-    [("🔍 监听状态", "check_monitor_status")],
-    [("🔙 返回主菜单", "show_main_menu")]
 ]
 
 # ==================== 任务管理按钮布局 ====================
@@ -347,15 +393,23 @@ __all__ = [
     "FREQUENCY_SETTINGS_BUTTONS",
     "TAIL_FREQUENCY_BUTTONS",
     "BUTTON_FREQUENCY_BUTTONS",
+    "MONITOR_MENU_BUTTONS",
+    "MONITORING_TASKS_BUTTONS",
+    "CREATE_MONITORING_TASK_BUTTONS",
+    "MONITORING_TASK_DETAIL_BUTTONS",
+    "MONITOR_CONFIG_BUTTONS",
+    "BATCH_SETTINGS_BUTTONS",
     "TASK_CONFIRMATION_BUTTONS",
-    "MONITOR_TEST_BUTTONS",
     "TASK_MANAGEMENT_BUTTONS",
     "CHANNEL_ADMIN_TEST_BUTTONS",
     "HELP_AND_STATUS_BUTTONS",
     "BUTTON_STATUS_MAPPING",
     "generate_button_layout",
     "generate_channel_list_buttons",
-    "generate_pagination_buttons"
+    "generate_pagination_buttons",
+    "generate_monitor_channel_buttons"
 ]
 
 
+# 简化版监听系统UI
+from simple_monitoring_ui import *
