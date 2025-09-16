@@ -110,7 +110,7 @@ class MultiBotConfigManager:
     def detect_deployment_environment(self) -> str:
         """检测部署环境"""
         # 检查是否在Render环境
-        if os.getenv('RENDER'):
+        if os.getenv('RENDER') or os.getenv('DEPLOYMENT_MODE') == 'render':
             return 'render'
         # 检查是否在Heroku环境
         elif os.getenv('DYNO'):
@@ -136,12 +136,23 @@ class MultiBotConfigManager:
     def _load_from_render_env(self, bot_name: str) -> Optional[Dict[str, Any]]:
         """从Render环境变量加载配置"""
         try:
+            logger.info(f"🔍 开始从Render环境变量加载机器人 '{bot_name}' 的配置")
+            
             # 检查是否有特定机器人的环境变量前缀
             bot_prefix = f"{bot_name.upper()}_"
             
             # 获取API ID和API Hash
             api_id_str = os.getenv(f"{bot_prefix}API_ID") or os.getenv('API_ID')
             api_hash_str = os.getenv(f"{bot_prefix}API_HASH") or os.getenv('API_HASH')
+            
+            # 获取Bot Token
+            bot_token = os.getenv(f"{bot_prefix}BOT_TOKEN") or os.getenv('BOT_TOKEN')
+            
+            logger.info(f"🔍 环境变量检查:")
+            logger.info(f"   BOT_INSTANCE: {os.getenv('BOT_INSTANCE')}")
+            logger.info(f"   {bot_prefix}API_ID: {api_id_str}")
+            logger.info(f"   {bot_prefix}API_HASH: {api_hash_str}")
+            logger.info(f"   {bot_prefix}BOT_TOKEN: {bot_token[:10] + '...' if bot_token else 'None'}")
             
             # 智能检测和修复：如果API_ID看起来像API_HASH（包含字母），则交换
             if api_id_str and not api_id_str.isdigit() and len(api_id_str) > 10:
@@ -160,7 +171,7 @@ class MultiBotConfigManager:
             
             config = {
                 "bot_name": bot_name,
-                "bot_token": os.getenv(f"{bot_prefix}BOT_TOKEN") or os.getenv('BOT_TOKEN'),
+                "bot_token": bot_token,
                 "api_id": api_id,
                 "api_hash": api_hash_str,
                 "firebase_project_id": os.getenv(f"{bot_prefix}FIREBASE_PROJECT_ID") or os.getenv('FIREBASE_PROJECT_ID'),
@@ -170,6 +181,11 @@ class MultiBotConfigManager:
                 "session_name": f"render_bot_session_{bot_name}",
                 "description": f"机器人 {bot_name} 的Render配置"
             }
+            
+            logger.info(f"🔍 配置验证结果:")
+            logger.info(f"   bot_token: {'✅' if config['bot_token'] and config['bot_token'] != 'your_bot_token' else '❌'}")
+            logger.info(f"   api_id: {'✅' if config['api_id'] > 0 else '❌'}")
+            logger.info(f"   api_hash: {'✅' if config['api_hash'] and config['api_hash'] != 'your_api_hash' else '❌'}")
             
             if self.validate_bot_config(config):
                 logger.info(f"✅ 已从Render环境变量加载机器人 '{bot_name}' 的配置")

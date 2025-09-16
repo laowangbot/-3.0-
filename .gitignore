@@ -4,6 +4,10 @@ data/
 sessions/
 *.session
 *.session-journal
+bot_session_default.session
+bot_session_default.session-journal
+user_session.session
+user_session.session-journal
 *.log
 bot.log
 channel_data.json
