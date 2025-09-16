@@ -865,13 +865,9 @@ class TelegramBot:
                     try:
                         me = await self.user_api_manager.client.get_me()
                         if me:
-                            # 真正已登录，不显示登录提示
-                            await message.reply_text(
-                                "✅ **User API已登录**\n\n"
-                                "🔧 当前使用User API模式，功能正常\n"
-                                "💡 如需重新登录，请联系管理员"
-                            )
-                            return True
+                            # 真正已登录，直接返回False让其他功能处理
+                            logger.debug("✅ User API已登录，跳过登录流程")
+                            return False
                         else:
                             # 登录状态无效，重置状态
                             logger.warning("🔍 User API状态无效，重置登录状态")
