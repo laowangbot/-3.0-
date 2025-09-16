@@ -165,6 +165,15 @@ class MultiBotConfigManager:
             logger.info(f"   {bot_prefix}API_HASH: {api_hash_str}")
             logger.info(f"   {bot_prefix}BOT_TOKEN: {bot_token[:10] + '...' if bot_token else 'None'}")
             
+            # 额外的调试信息
+            logger.info(f"🔍 额外调试信息:")
+            logger.info(f"   os.getenv('WANG_API_ID'): {os.getenv('WANG_API_ID')}")
+            logger.info(f"   os.getenv('WANG_API_HASH'): {os.getenv('WANG_API_HASH')}")
+            logger.info(f"   os.getenv('WANG_BOT_TOKEN'): {os.getenv('WANG_BOT_TOKEN')}")
+            logger.info(f"   os.getenv('API_ID'): {os.getenv('API_ID')}")
+            logger.info(f"   os.getenv('API_HASH'): {os.getenv('API_HASH')}")
+            logger.info(f"   os.getenv('BOT_TOKEN'): {os.getenv('BOT_TOKEN')}")
+            
             # 智能检测和修复：如果API_ID看起来像API_HASH（包含字母），则交换
             if api_id_str and not api_id_str.isdigit() and len(api_id_str) > 10:
                 logger.warning(f"⚠️ 检测到API_ID和API_HASH可能被交换，尝试自动修复")
