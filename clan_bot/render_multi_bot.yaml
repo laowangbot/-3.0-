@@ -1,0 +1,100 @@
+# ==================== Render多机器人部署配置 ====================
+# 此文件用于在Render上部署多个机器人实例
+
+services:
+  # 机器人实例1
+  - type: web
+    name: telegram-bot-instance-1
+    env: bot1
+    region: singapore
+    plan: starter
+    buildCommand: |
+      pip install -r requirements.txt
+      pip install firebase-admin
+    startCommand: python lsjmain.py
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_INSTANCE
+        value: bot1
+      - key: BOT1_API_ID
+        sync: false
+      - key: BOT1_API_HASH
+        sync: false
+      - key: BOT1_TOKEN
+        sync: false
+      - key: FIREBASE_CREDENTIALS
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DEPLOYMENT_MODE
+        value: render
+
+  # 机器人实例2
+  - type: web
+    name: telegram-bot-instance-2
+    env: bot2
+    region: singapore
+    plan: starter
+    buildCommand: |
+      pip install -r requirements.txt
+      pip install firebase-admin
+    startCommand: python lsjmain.py
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_INSTANCE
+        value: bot2
+      - key: BOT2_API_ID
+        sync: false
+      - key: BOT2_API_HASH
+        sync: false
+      - key: BOT2_TOKEN
+        sync: false
+      - key: FIREBASE_CREDENTIALS
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DEPLOYMENT_MODE
+        value: render
+
+  # 机器人实例3
+  - type: web
+    name: telegram-bot-instance-3
+    env: bot3
+    region: singapore
+    plan: starter
+    buildCommand: |
+      pip install -r requirements.txt
+      pip install firebase-admin
+    startCommand: python lsjmain.py
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_INSTANCE
+        value: bot3
+      - key: BOT3_API_ID
+        sync: false
+      - key: BOT3_API_HASH
+        sync: false
+      - key: BOT3_TOKEN
+        sync: false
+      - key: FIREBASE_CREDENTIALS
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DEPLOYMENT_MODE
+        value: render
+
+# 环境变量说明：
+# BOT_INSTANCE: 机器人实例标识符 (bot1, bot2, bot3)
+# BOT*_API_ID: 对应机器人的API ID
+# BOT*_API_HASH: 对应机器人的API Hash
+# BOT*_TOKEN: 对应机器人的Bot Token
+# FIREBASE_CREDENTIALS: Firebase服务账户凭证JSON
+# WEBHOOK_URL: Webhook URL (可选)
+# LOG_LEVEL: 日志级别 (DEBUG, INFO, WARNING, ERROR)
+# DEPLOYMENT_MODE: 部署模式标识
