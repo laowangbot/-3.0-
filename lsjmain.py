@@ -13601,7 +13601,13 @@ t.me/test_channel
             
         except Exception as e:
             logger.error(f"显示增强过滤配置失败: {e}")
-            await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+            try:
+                await callback_query.edit_message_text("❌ 处理失败，请稍后重试")
+            except Exception as edit_error:
+                if "MESSAGE_NOT_MODIFIED" in str(edit_error):
+                    logger.debug("错误消息未修改，跳过更新")
+                else:
+                    logger.error(f"显示错误消息失败: {edit_error}")
     
     async def _handle_toggle_remove_links_mode(self, callback_query: CallbackQuery):
         """处理链接过滤方式切换"""
