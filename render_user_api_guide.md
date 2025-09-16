@@ -18,7 +18,7 @@
 
 1. **在本地运行机器人**：
    ```bash
-   python main.py
+   python lsjmain.py
    ```
 
 2. **完成User API登录**：

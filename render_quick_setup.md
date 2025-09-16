@@ -26,7 +26,7 @@ Name: bybot3-telegram-bot
 Region: Singapore
 Runtime: Python 3
 Build Command: pip install -r requirements.txt
-Start Command: python main.py
+Start Command: python lsjmain.py
 ```
 
 ### 4. 环境变量配置

@@ -51,6 +51,26 @@ class MessageEngine:
         # 用户名模式
         self.username_pattern = re.compile(r'@\w+')
     
+    def _safe_encode_text(self, text: str) -> str:
+        """安全编码文本，处理UTF-16编码错误"""
+        if not text or not isinstance(text, str):
+            return text
+        
+        try:
+            # 尝试正常处理
+            return text
+        except UnicodeDecodeError:
+            try:
+                # 尝试UTF-8编码
+                return text.encode('utf-8', errors='ignore').decode('utf-8')
+            except:
+                # 最后尝试ASCII编码
+                return text.encode('ascii', errors='ignore').decode('ascii')
+        except Exception as e:
+            logger.warning(f"文本编码处理失败: {e}")
+            # 返回安全的文本
+            return ''.join(char for char in text if ord(char) < 128)
+    
     def _remove_links_with_context(self, text: str) -> str:
         """智能移除链接和包含超链接的文字"""
         if not text:
@@ -202,14 +222,98 @@ class MessageEngine:
         
         return text
     
+    def _is_blank_message(self, message: Message) -> bool:
+        """智能检测空白消息"""
+        logger = logging.getLogger(__name__)
+        
+        # 检查消息是否为空
+        if hasattr(message, 'empty') and message.empty:
+            logger.debug("🔍 检测到空消息属性")
+            return True
+        
+        # 检查是否是服务消息
+        if hasattr(message, 'service') and message.service:
+            logger.debug("🔍 检测到服务消息")
+            return True
+        
+        # 检查文本内容
+        text_content = message.text
+        caption_content = message.caption
+        has_media = bool(message.media)
+        
+        # 如果没有媒体，且文本内容为空，则认为是空白消息
+        if not has_media and (text_content is None or text_content == ""):
+            logger.debug("🔍 检测到无媒体的空文本消息")
+            return True
+        
+        # 检查文本内容是否只有空白字符
+        if text_content and not text_content.strip():
+            logger.debug("🔍 检测到空白文本消息")
+            return True
+        
+        if caption_content and not caption_content.strip():
+            logger.debug("🔍 检测到空白标题消息")
+            return True
+        
+        # 检查是否只包含特殊字符（如空格、制表符、换行符等）
+        if text_content:
+            stripped_text = text_content.strip()
+            if not stripped_text or all(c in ' \t\n\r\f\v' for c in stripped_text):
+                logger.debug("🔍 检测到只包含空白字符的文本消息")
+                return True
+        
+        if caption_content:
+            stripped_caption = caption_content.strip()
+            if not stripped_caption or all(c in ' \t\n\r\f\v' for c in stripped_caption):
+                logger.debug("🔍 检测到只包含空白字符的标题消息")
+                return True
+        
+        # 检查是否只包含重复字符（至少3个字符才认为是重复）
+        if text_content and len(text_content.strip()) >= 3:
+            unique_chars = set(text_content.strip())
+            if len(unique_chars) == 1:
+                logger.debug("🔍 检测到只包含重复字符的文本消息")
+                return True
+        
+        # 检查是否只包含数字或特殊符号（至少5个字符才认为是无意义）
+        if text_content:
+            clean_text = text_content.strip()
+            if len(clean_text) >= 5 and all(c.isdigit() or c in '.,!?;:()[]{}@#$%^&*' for c in clean_text):
+                logger.debug("🔍 检测到过短的数字/符号消息")
+                return True
+        
+        # 检查是否只包含链接但没有其他内容
+        if text_content:
+            import re
+            # 简单的链接检测
+            url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+            urls = re.findall(url_pattern, text_content)
+            if urls and len(text_content.strip()) == len(' '.join(urls)):
+                logger.debug("🔍 检测到只包含链接的文本消息")
+                return True
+        
+        # 检查是否只包含表情符号（至少3个字符才认为是无意义）
+        if text_content:
+            clean_text = ''.join(text_content.split())
+            if len(clean_text) >= 3 and all(ord(c) > 127 for c in clean_text):
+                logger.debug("🔍 检测到只包含表情符号的文本消息")
+                return True
+        
+        return False
+    
     def should_process_message(self, message: Message, config: Optional[Dict[str, Any]] = None) -> bool:
-        """判断是否应该处理该消息"""
+        """判断是否应该处理该消息 - 智能跳过空白信息"""
         # 使用指定的配置或全局配置
         effective_config = config or self.config
         
         # 添加调试日志
         import logging
         logger = logging.getLogger(__name__)
+        
+        # 智能空白消息检测
+        if self._is_blank_message(message):
+            logger.info("⏭️ 智能跳过空白消息")
+            return False
         
         # 检查消息类型（包括caption和媒体）
         has_text = bool(message.text and message.text.strip())
@@ -321,6 +425,9 @@ class MessageEngine:
         """处理文本内容"""
         if not text:
             return "", False
+        
+        # 安全编码处理，防止UTF-16编码错误
+        text = self._safe_encode_text(text)
         
         # 使用指定的配置或全局配置
         effective_config = config or self.config
@@ -507,6 +614,10 @@ class MessageEngine:
         if not text and not has_media:
             return text
         
+        # 如果原文本为空但有媒体内容，只返回小尾巴
+        if not text and has_media:
+            return tail_text
+        
         return f"{text}\n\n{tail_text}"
     
     def add_additional_buttons(self, original_buttons: Optional[InlineKeyboardMarkup] = None, config: Optional[Dict[str, Any]] = None) -> Optional[InlineKeyboardMarkup]:
@@ -646,7 +757,7 @@ class MessageEngine:
         # 例如：根据按钮文本、URL等进行过滤
         return buttons
     
-    def process_message(self, message: Message, channel_config: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
+    def process_message(self, message: Message, channel_config: Optional[Dict[str, Any]] = None, skip_blank_check: bool = False) -> Tuple[Dict[str, Any], bool]:
         """处理完整消息"""
         self.message_counter += 1
         
@@ -654,9 +765,14 @@ class MessageEngine:
         effective_config = channel_config or self.config
         
         # 检查是否应该处理
-        # 临时修复：强制跳过should_process_message检查，直接处理所有消息
-        should_process = True
-        logger.info("🔧 临时修复：强制跳过should_process_message检查，直接处理所有消息")
+        if skip_blank_check:
+            # 跳过空白检查，直接处理消息
+            should_process = True
+            logger.info("🔧 跳过空白检查，直接处理消息")
+        else:
+            # 临时修复：强制跳过should_process_message检查，直接处理所有消息
+            should_process = True
+            logger.info("🔧 临时修复：强制跳过should_process_message检查，直接处理所有消息")
         logger.info(f"🔍 should_process_message 结果: {should_process}")
         
         # 处理文本（包括caption）
@@ -687,7 +803,7 @@ class MessageEngine:
             effective_config.get('button_filter_mode') == 'remove_message' and 
             original_buttons and original_buttons.inline_keyboard):
             logger.info("❌ 消息包含按钮且设置为移除整条消息，跳过该消息")
-            return {}, True  # True表示应该跳过消息
+            return {}, False  # False表示应该跳过消息
         
         # 处理按钮
         filtered_buttons = self.filter_buttons(original_buttons, effective_config)
@@ -731,6 +847,15 @@ class MessageEngine:
             result['media_group'] = True
             result['media_group_id'] = message.media_group_id
             logger.info(f"🔍 检测到媒体组消息: media_group_id={message.media_group_id}")
+            
+            # 添加媒体组完整性信息
+            result['media_group_info'] = {
+                'group_id': message.media_group_id,
+                'message_id': message.id,
+                'has_caption': bool(message.caption),
+                'has_text': bool(message.text),
+                'media_type': self._get_media_type(message)
+            }
         
         # 添加媒体信息
         if message.photo:
@@ -750,7 +875,7 @@ class MessageEngine:
         elif message.video_note:
             result['video_note'] = message.video_note
         
-        return result, False  # False表示不应该跳过消息
+        return result, True  # True表示应该处理消息
     
     def process_media_group(self, messages: List[Message], channel_config: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
         """处理媒体组消息"""
@@ -766,7 +891,9 @@ class MessageEngine:
         all_captions = []
         for msg in messages:
             if msg.caption and msg.caption.strip():
-                all_captions.append(msg.caption.strip())
+                # 安全编码处理
+                safe_caption = self._safe_encode_text(msg.caption.strip())
+                all_captions.append(safe_caption)
         
         # 合并caption
         if all_captions:
@@ -826,7 +953,7 @@ class MessageEngine:
             'additional_buttons_added': bool(effective_config.get('additional_buttons'))
         }
         
-        return result, False  # False表示不应该跳过消息
+        return result, True  # True表示应该处理消息
     
     def _should_add_tail_text(self, config: Dict[str, Any]) -> bool:
         """检查是否应该添加小尾巴文本（使用指定配置）"""
@@ -912,6 +1039,41 @@ class MessageEngine:
             'replacement_words_count': len(self.config.get('replacement_words', {})),
             'additional_buttons_count': len(self.config.get('additional_buttons', []))
         }
+    
+    def _get_media_type(self, message: Message) -> str:
+        """获取消息的媒体类型"""
+        if message.photo:
+            return "photo"
+        elif message.video:
+            return "video"
+        elif message.document:
+            return "document"
+        elif message.audio:
+            return "audio"
+        elif message.voice:
+            return "voice"
+        elif message.sticker:
+            return "sticker"
+        elif message.animation:
+            return "animation"
+        elif message.video_note:
+            return "video_note"
+        elif message.contact:
+            return "contact"
+        elif message.location:
+            return "location"
+        elif message.venue:
+            return "venue"
+        elif message.poll:
+            return "poll"
+        elif message.dice:
+            return "dice"
+        elif message.game:
+            return "game"
+        elif message.web_page:
+            return "web_page"
+        else:
+            return "unknown"
 
 # ==================== 导出函数 ====================
 def create_message_engine(config: Dict[str, Any]) -> MessageEngine:

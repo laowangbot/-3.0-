@@ -18,8 +18,7 @@ MAIN_MENU_BUTTONS_WITH_USER_API = [
         ("🔧 过滤设定", "show_feature_config_menu")
     ],
     [
-        ("📜 我的任务", "view_tasks"),
-        ("📋 历史记录", "view_history")
+        ("📋 任务管理", "task_management")
     ],
     [
         ("🔍 当前配置", "view_config"),
@@ -42,8 +41,7 @@ MAIN_MENU_BUTTONS_USER_API_LOGGED_IN = [
         ("🔧 过滤设定", "show_feature_config_menu")
     ],
     [
-        ("📜 我的任务", "view_tasks"),
-        ("📋 历史记录", "view_history")
+        ("📋 任务管理", "task_management")
     ],
     [
         ("🔍 当前配置", "view_config"),
@@ -228,8 +226,9 @@ TASK_CONFIRMATION_BUTTONS = [
 
 # ==================== 任务管理按钮布局 ====================
 TASK_MANAGEMENT_BUTTONS = [
-    [("📋 查看历史记录", "view_history")],
-    [("📜 查看我的任务", "view_tasks")],
+    [("🟢 活动任务", "view_active_tasks")],
+    [("📜 历史任务", "view_history_tasks")],
+    [("🔄 断点续传", "resume_cloning_progress")],
     [("🔙 返回主菜单", "show_main_menu")]
 ]
 

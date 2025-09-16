@@ -129,7 +129,7 @@ def main():
     else:
         print("\n💡 未找到本地session文件")
         print("请先在本地完成User API登录：")
-        print("1. 运行: python main.py")
+        print("1. 运行: python lsjmain.py")
         print("2. 完成User API登录")
         print("3. 重新运行此脚本")
     

@@ -136,12 +136,12 @@
   },
   "-1002966284576": {
     "id": -1002966284576,
-    "title": "1",
+    "title": "15131",
     "username": "xsm53",
     "type": "chattype.channel",
     "verified": true,
-    "added_at": "2025-09-09T07:07:11.418509",
-    "last_verified": "2025-09-09T07:07:11.418509"
+    "added_at": "2025-09-16T15:32:32.173873",
+    "last_verified": "2025-09-16T15:32:32.173873"
   },
   "-1002813890018": {
     "id": -1002813890018,
@@ -149,7 +149,61 @@
     "username": null,
     "type": "channel",
     "verified": true,
-    "added_at": "2025-09-11T23:43:31.663580",
-    "last_verified": "2025-09-11T23:43:31.663580"
+    "added_at": "2025-09-15T13:34:01.762889",
+    "last_verified": "2025-09-15T13:34:01.762889"
+  },
+  "-1002529185356": {
+    "id": -1002529185356,
+    "title": "❿ 三级片系列",
+    "username": null,
+    "type": "channel",
+    "verified": true,
+    "added_at": "2025-09-13T01:09:55.544658",
+    "last_verified": "2025-09-13T01:09:55.544658"
+  },
+  "-1002512285893": {
+    "id": -1002512285893,
+    "title": "❶ 萝莉少女系列",
+    "username": null,
+    "type": "channel",
+    "verified": true,
+    "added_at": "2025-09-13T23:52:11.737727",
+    "last_verified": "2025-09-13T23:52:11.739771"
+  },
+  "-1002452694577": {
+    "id": -1002452694577,
+    "title": "❸ 抖音快手网红系列",
+    "username": null,
+    "type": "channel",
+    "verified": true,
+    "added_at": "2025-09-13T23:52:20.924753",
+    "last_verified": "2025-09-13T23:52:20.924753"
+  },
+  "-1002571635153": {
+    "id": -1002571635153,
+    "title": "❽ 麻豆国产AV系列",
+    "username": null,
+    "type": "channel",
+    "verified": true,
+    "added_at": "2025-09-14T22:41:46.323277",
+    "last_verified": "2025-09-14T22:41:46.323277"
+  },
+  "-1002724829623": {
+    "id": -1002724829623,
+    "title": "❶❸ 韩国主播系列",
+    "username": null,
+    "type": "chattype.channel",
+    "verified": true,
+    "added_at": "2025-09-16T14:00:11.711349",
+    "last_verified": "2025-09-16T14:00:11.711349"
+  },
+  "-1002692998023": {
+    "id": -1002692998023,
+    "title": "❷ 欧美大片系列",
+    "username": null,
+    "type": "chattype.channel",
+    "verified": true,
+    "added_at": "2025-09-16T14:12:33.031087",
+    "last_verified": "2025-09-16T14:12:33.031087"
   }
 }

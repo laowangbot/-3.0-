@@ -42,7 +42,7 @@
 - **Branch**: `main`
 - **Runtime**: `Python 3`
 - **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `python main.py`
+- **Start Command**: `python lsjmain.py`
 
 #### 环境变量设置
 点击 **"Environment"** 标签，添加以下环境变量：

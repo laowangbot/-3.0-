@@ -35,7 +35,7 @@
 - [ ] 区域已选择（推荐：Singapore）
 - [ ] 运行时已选择（Python 3）
 - [ ] 构建命令已设置：`pip install -r requirements.txt`
-- [ ] 启动命令已设置：`python main.py`
+- [ ] 启动命令已设置：`python lsjmain.py`
 
 ### 3. 环境变量配置
 - [ ] BOT_ID=bybot3

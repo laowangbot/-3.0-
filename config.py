@@ -95,19 +95,42 @@ DEFAULT_USER_CONFIG = {
     "channel_filters": {},  # 频道组独立过滤配置
     "max_channel_pairs": 100,
     
-    # 任务设置
-    "max_concurrent_tasks": 10,  # 支持最多10个并发任务
-    "max_user_concurrent_tasks": 20,  # 用户最大并发任务数（支持20个频道组同时搬运）
+    # 任务设置 - 优化并发处理能力
+    "max_concurrent_tasks": 50,  # 支持最多50个并发任务（从10提升到50）
+    "max_user_concurrent_tasks": 100,  # 用户最大并发任务数（从20提升到100）
     "task_timeout": 86400,  # 24小时 - 适应大量消息搬运
     "max_task_time": 172800,  # 单个任务最大运行时间（48小时）- 支持超大规模搬运
     "progress_update_timeout": 172800,  # 进度更新循环最大运行时间（48小时）- 支持长期运行
     
-    # 性能设置
-    "message_delay": 0.05,  # 消息间隔（秒）- 优化大规模搬运速度
-    "media_group_delay": 0.3,  # 媒体组处理延迟（秒）- 优化处理速度
-    "batch_size": 100,  # 批量处理大小 - 增加批量大小提高效率
-    "retry_attempts": 5,  # 重试次数 - 增加重试次数提高稳定性
-    "retry_delay": 1.5,  # 重试延迟（秒）- 适度减少延迟提高效率
+    # 性能设置 - 优化处理速度
+    "message_delay": 0.02,  # 减少消息延迟（从0.05减少到0.02）
+    "media_group_delay": 0.5,  # 媒体组处理延迟（从0.3增加到0.5）
+    "max_messages_per_check": 200,  # 每次检查最大消息数（从100增加到200）
+    
+    # API限制保护
+    "api_rate_limit": 30,  # 每分钟最多API调用次数
+    "api_retry_attempts": 5,  # API重试次数
+    "api_retry_delay": 2,  # API重试延迟（秒）
+    "api_backoff_factor": 2,  # 指数退避因子
+    
+    # 内存管理
+    "max_processed_messages": 10000,  # 最大存储已处理消息数
+    "message_cleanup_interval": 3600,  # 消息清理间隔（秒）
+    "memory_usage_threshold": 0.8,  # 内存使用阈值
+    
+    # 错误处理
+    "max_consecutive_errors": 5,  # 最大连续错误数
+    "error_recovery_delay": 30,  # 错误恢复延迟（秒）
+    "circuit_breaker_threshold": 10,  # 熔断器阈值
+    
+    # 性能监控
+    "metrics_collection_interval": 60,  # 指标收集间隔（秒）
+    "performance_alert_threshold": 0.9,  # 性能告警阈值
+    "slow_task_threshold": 10,  # 慢任务阈值（秒）
+    
+    # 监听系统优化配置
+    "batch_size": 5,  # 分批处理大小（减少到5个频道）
+    "check_interval": 5,  # 检查间隔（增加到5秒）
     
     # Firebase批量存储设置
     "firebase_batch_enabled": True,  # 是否启用Firebase批量存储
@@ -165,7 +188,11 @@ def get_config() -> Dict[str, Any]:
     else:
         api_id = 12345
     
-    return {
+    # 合并默认配置和基础配置
+    config = DEFAULT_USER_CONFIG.copy()
+    
+    # 添加基础配置
+    config.update({
         # 机器人配置
         "bot_id": bot_id,
         "bot_name": bot_name,
@@ -186,7 +213,9 @@ def get_config() -> Dict[str, Any]:
         
         # 环境信息
         "is_render": is_render,
-    }
+    })
+    
+    return config
 
 # ==================== 配置验证 ====================
 

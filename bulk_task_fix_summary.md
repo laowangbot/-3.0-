@@ -161,7 +161,7 @@ async def save_final_state(self):
     await self.task_state_manager.save_task_progress(self.task_id)
 ```
 
-### 5. 主程序集成 (`main.py`)
+### 5. 主程序集成 (`lsjmain.py`)
 
 #### 核心改进
 - **管理器启动**: 在初始化时启动所有管理器
@@ -228,7 +228,7 @@ await start_memory_optimizer(self.bot_id)
 - `concurrent_task_manager.py` - 新增
 - `memory_optimizer.py` - 新增
 - `cloning_engine.py` - 修改
-- `main.py` - 修改
+- `lsjmain.py` - 修改
 
 ### 2. 依赖安装
 ```bash

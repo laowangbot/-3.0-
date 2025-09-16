@@ -22,19 +22,14 @@ class ChannelDataManager:
     def load_data(self):
         """从本地文件加载频道数据"""
         try:
-            logger.info(f"🔍 尝试加载频道数据文件: {self.data_file}")
+            logger.debug(f"🔍 尝试加载频道数据文件: {self.data_file}")
             if os.path.exists(self.data_file):
                 with open(self.data_file, 'r', encoding='utf-8') as f:
                     self.channels_data = json.load(f)
-                logger.info(f"✅ 已加载频道数据: {len(self.channels_data)} 个频道")
-                # 打印前几个频道的信息用于调试
-                if self.channels_data:
-                    sample_channels = list(self.channels_data.items())[:3]
-                    for channel_id, channel_data in sample_channels:
-                        logger.info(f"  📋 频道 {channel_id}: {channel_data.get('title', '未知')} (验证: {channel_data.get('verified', False)})")
+                logger.debug(f"✅ 已加载频道数据: {len(self.channels_data)} 个频道")
             else:
                 self.channels_data = {}
-                logger.info(f"📝 频道数据文件不存在: {self.data_file}")
+                logger.debug(f"📝 频道数据文件不存在: {self.data_file}")
         except Exception as e:
             logger.error(f"❌ 加载频道数据失败: {e}")
             self.channels_data = {}

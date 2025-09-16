@@ -89,7 +89,7 @@ class LogConfig:
         else:
             # 生产模式下，减少详细调试信息
             logging.getLogger('message_engine').setLevel(logging.WARNING)
-            logging.getLogger('monitoring_engine').setLevel(logging.WARNING)
+            logging.getLogger('monitoring_engine').setLevel(logging.INFO)  # 保持INFO级别以显示监听日志
             logging.getLogger('cloning_engine').setLevel(logging.INFO)
             logging.getLogger('main').setLevel(logging.INFO)
             
@@ -132,8 +132,8 @@ class LogConfig:
         monitoring_logger = logging.getLogger('monitoring_engine')
         monitoring_logger.addFilter(MonitoringLogFilter())
         
-        # 设置更严格的日志级别
-        monitoring_logger.setLevel(logging.WARNING)
+        # 保持INFO级别以显示监听日志
+        monitoring_logger.setLevel(logging.INFO)
     
     @staticmethod
     def get_optimized_logger(name: str, level: str = 'INFO') -> logging.Logger:

@@ -104,7 +104,7 @@ async def test_main_program_integration():
     
     try:
         # 导入主程序
-        from main import TelegramBot
+        from lsjmain import TelegramBot
         
         # 创建机器人实例（不启动）
         bot = TelegramBot("test_bot")

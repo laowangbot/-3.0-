@@ -42,7 +42,7 @@ class LocalDataManager:
                 self._save_index({})
             
             self.initialized = True
-            logger.info(f"✅ 本地存储初始化成功 (Bot: {self.bot_id})")
+            logger.debug(f"✅ 本地存储初始化成功 (Bot: {self.bot_id})")
             
         except Exception as e:
             logger.error(f"❌ 本地存储初始化失败: {e}")

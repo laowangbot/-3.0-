@@ -76,7 +76,7 @@
 Render云平台
 ├── Web服务
 │   ├── Python 3运行时
-│   ├── 主程序 (main.py)
+│   ├── 主程序 (lsjmain.py)
 │   └── 依赖包 (requirements.txt)
 ├── 环境变量
 │   ├── Telegram配置

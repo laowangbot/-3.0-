@@ -18,7 +18,7 @@
 ### 步骤1：本地完成登录
 ```bash
 # 在本地运行
-python main.py
+python lsjmain.py
 
 # 完成User API登录
 # 1. 发送 /start
@@ -65,7 +65,7 @@ if __name__ == "__main__":
 让我修改代码，支持从环境变量恢复session：
 
 ```python
-# 在main.py中添加
+# 在lsjmain.py中添加
 async def restore_session_from_env():
     """从环境变量恢复session"""
     try:

@@ -26,8 +26,8 @@ async def check_monitor_status():
             print("❌ 未找到API配置")
             return
         
-        # 创建客户端
-        client = Client("check_monitor", api_id=api_id, api_hash=api_hash)
+        # 创建客户端，使用现有session
+        client = Client("user_session", api_id=api_id, api_hash=api_hash)
         
         # 启动客户端
         await client.start()
@@ -67,6 +67,7 @@ if __name__ == "__main__":
     print("🔍 监听状态检查")
     print("=" * 50)
     asyncio.run(check_monitor_status())
+
 
 
 

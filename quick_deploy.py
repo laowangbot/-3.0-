@@ -100,7 +100,7 @@ def generate_render_yaml():
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python lsjmain.py
     envVars:
       - key: PORT
         value: 8080
@@ -169,7 +169,7 @@ def print_deployment_instructions(config: Dict[str, str]):
     print("   - Branch: main")
     print("   - Runtime: Python 3")
     print("   - Build Command: pip install -r requirements.txt")
-    print("   - Start Command: python main.py")
+    print("   - Start Command: python lsjmain.py")
     print()
     print("6. 在Environment标签中添加以下环境变量：")
     print()

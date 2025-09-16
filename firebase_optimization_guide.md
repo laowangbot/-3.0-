@@ -192,7 +192,7 @@ FIREBASE_CREDENTIALS={"type":"service_account",...}
 
 ### 2. 启动优化服务
 
-在`main.py`中添加：
+在`lsjmain.py`中添加：
 
 ```python
 from optimized_firebase_manager import start_optimization_services

@@ -1,0 +1,39 @@
+{
+  "realtime_7951964655_1758043596": {
+    "task_id": "realtime_7951964655_1758043596",
+    "user_id": "7951964655",
+    "target_channel": "xsm53",
+    "source_channels": [
+      {
+        "channel_id": "-1003011899824",
+        "channel_name": "监听测试源频道",
+        "channel_username": "xsm58",
+        "last_message_id": 1003,
+        "check_interval": 60,
+        "monitoring_mode": "realtime"
+      }
+    ],
+    "config": {
+      "check_interval": 60,
+      "max_retries": 3,
+      "retry_delay": 30
+    },
+    "status": "pending",
+    "monitoring_mode": "realtime",
+    "delay_seconds": 5,
+    "batch_size": 10,
+    "stats": {
+      "total_processed": 0,
+      "successful_transfers": 0,
+      "failed_transfers": 0,
+      "filtered_messages": 0,
+      "processed_messages": 0,
+      "successful_messages": 0,
+      "last_message_time": null,
+      "start_time": null,
+      "source_channel_stats": {}
+    },
+    "created_at": "2025-09-17T01:26:36.536827",
+    "last_activity": null
+  }
+}

@@ -210,7 +210,7 @@ class MultiBotConfigManager:
                             load_dotenv('.env', encoding='utf-8-sig')
                         except UnicodeDecodeError:
                             load_dotenv('.env', encoding='utf-16')
-                    logger.info("✅ 已加载默认环境文件: .env")
+                    logger.debug("✅ 已加载默认环境文件: .env")
                 else:
                     logger.warning("⚠️ 未找到环境文件")
                     return None
@@ -248,7 +248,7 @@ class MultiBotConfigManager:
             }
             
             if self.validate_bot_config(config):
-                logger.info(f"✅ 已从环境文件加载机器人 '{bot_name}' 的配置")
+                logger.debug(f"✅ 已从环境文件加载机器人 '{bot_name}' 的配置")
                 return config
             else:
                 logger.error(f"❌ 环境文件配置不完整")
@@ -333,8 +333,8 @@ def setup_multi_bot_environment():
     logger.info("💡 使用方法:")
     logger.info("   1. 复制 .env.example_bot 为 .env.<你的机器人名称>")
     logger.info("   2. 编辑.env文件，填入实际的配置值")
-    logger.info("   3. 使用 python main.py --bot <机器人名称> 启动")
-    logger.info("   4. 或者使用 python main.py --create-bot <机器人名称> 创建新配置")
+    logger.info("   3. 使用 python lsjmain.py --bot <机器人名称> 启动")
+    logger.info("   4. 或者使用 python lsjmain.py --create-bot <机器人名称> 创建新配置")
 
 if __name__ == "__main__":
     setup_multi_bot_environment()

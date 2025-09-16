@@ -109,16 +109,39 @@ class MonitoringEngine:
         self.is_running = False
         self.monitoring_loop_task = None
         
-        # 监听配置
+        # 监听配置 - 优化并发处理
         self.global_check_interval = 60  # 全局检查间隔（60秒）
-        self.max_concurrent_tasks = 10  # 最大并发任务数
+        self.max_concurrent_tasks = config.get('max_concurrent_tasks', 50)  # 最大并发任务数（从10提升到50）
+        self.batch_size = config.get('batch_size', 5)  # 分批处理大小（5个频道）
+        self.check_interval = config.get('check_interval', 5)  # 检查间隔（5秒）
         
-        logger.info("监听引擎初始化完成")
+        # API限制管理
+        self.api_rate_limit = config.get('api_rate_limit', 30)  # 每分钟API调用限制
+        self.api_call_times = []  # API调用时间记录
+        self.consecutive_errors = 0  # 连续错误计数
+        self.circuit_breaker_active = False  # 熔断器状态
+        self.circuit_breaker_reset_time = None  # 熔断器重置时间
+        
+        # 性能监控
+        self.performance_metrics = {
+            'total_messages_processed': 0,
+            'successful_transfers': 0,
+            'failed_transfers': 0,
+            'api_calls_made': 0,
+            'average_processing_time': 0,
+            'concurrent_tasks_running': 0,
+            'peak_concurrent_tasks': 0
+        }
+        
+        # 启动性能监控任务
+        asyncio.create_task(self._monitor_performance())
+        
+        logger.info("🔧 监听引擎初始化完成")
     
     async def start_monitoring(self):
         """启动监听系统"""
         if self.is_running:
-            logger.warning("监听系统已在运行")
+            logger.warning("⚠️ 监听系统已在运行")
             return
         
         self.is_running = True
@@ -132,7 +155,7 @@ class MonitoringEngine:
     async def stop_monitoring(self):
         """停止监听系统"""
         if not self.is_running:
-            logger.warning("监听系统未运行")
+            logger.warning("⚠️ 监听系统未运行")
             return
         
         self.is_running = False
@@ -950,6 +973,33 @@ class RealTimeMonitoringEngine:
             'start_time': None
         }
         
+        # 优化配置 - 从config加载
+        self.global_check_interval = 60  # 全局检查间隔（60秒）
+        self.max_concurrent_tasks = self.config.get('max_concurrent_tasks', 50)  # 最大并发任务数
+        self.batch_size = self.config.get('batch_size', 5)  # 分批处理大小（减少到5个频道）
+        self.check_interval = self.config.get('check_interval', 5)  # 检查间隔（增加到5秒）
+        
+        # API限制和错误处理
+        self.api_rate_limit = self.config.get('api_rate_limit', 30)  # 每分钟API调用限制
+        self.api_call_times = []  # API调用时间记录
+        self.consecutive_errors = 0  # 连续错误计数
+        self.circuit_breaker_active = False  # 熔断器状态
+        self.circuit_breaker_reset_time = None  # 熔断器重置时间
+        
+        # 性能监控
+        self.performance_metrics = {
+            'total_messages_processed': 0,
+            'successful_transfers': 0,
+            'failed_transfers': 0,
+            'api_calls_made': 0,
+            'average_processing_time': 0,
+            'concurrent_tasks_running': 0,
+            'peak_concurrent_tasks': 0
+        }
+        
+        # 启动性能监控任务
+        asyncio.create_task(self._monitor_performance())
+        
         # 加载任务
         self._load_tasks()
     
@@ -1339,10 +1389,10 @@ class RealTimeMonitoringEngine:
     
     async def _poll_messages(self):
         """分批轮换检查消息 - 优化API调用频率"""
-        logger.info("🔄 启动分批轮换检查（每5秒检查一批）...")
+        logger.info(f"🔄 启动分批轮换检查（每{self.check_interval}秒检查一批，每批{self.batch_size}个频道）...")
         last_message_id = {}
         current_batch = 0
-        batch_size = 5  # 每批检查5个频道
+        batch_size = self.batch_size  # 使用配置的批处理大小
         
         while True:
             try:
@@ -1356,7 +1406,7 @@ class RealTimeMonitoringEngine:
                         all_channels.append((task, source_channel))
                 
                 if not all_channels:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(self.check_interval)
                     continue
                 
                 # 分批处理
@@ -1365,7 +1415,7 @@ class RealTimeMonitoringEngine:
                 end_idx = min(start_idx + batch_size, len(all_channels))
                 current_batch_channels = all_channels[start_idx:end_idx]
                 
-                logger.info(f"🔍 检查批次 {current_batch + 1}/{total_batches} ({len(current_batch_channels)} 个频道)")
+                logger.debug(f"🔍 检查批次 {current_batch + 1}/{total_batches} ({len(current_batch_channels)} 个频道)")
                 
                 # 并发检查当前批次的所有频道
                 check_tasks = []
@@ -1378,24 +1428,89 @@ class RealTimeMonitoringEngine:
                 # 移动到下一批次
                 current_batch = (current_batch + 1) % total_batches
                 
-                # 等待5秒再检查下一批次
-                await asyncio.sleep(5)
+                # 等待检查间隔再检查下一批次
+                await asyncio.sleep(self.check_interval)
                 
             except Exception as e:
                 logger.error(f"❌ [分批轮换] 检查失败: {e}")
                 await asyncio.sleep(10)
     
+    async def _check_api_rate_limit(self):
+        """检查API调用频率限制"""
+        current_time = datetime.now()
+        
+        # 清理1分钟前的API调用记录
+        self.api_call_times = [
+            call_time for call_time in self.api_call_times
+            if current_time - call_time < timedelta(minutes=1)
+        ]
+        
+        # 检查是否超过限制
+        if len(self.api_call_times) >= self.api_rate_limit:
+            # 计算需要等待的时间
+            oldest_call = min(self.api_call_times)
+            wait_time = 60 - (current_time - oldest_call).total_seconds()
+            
+            if wait_time > 0:
+                logger.warning(f"⚠️ API调用频率限制，等待 {wait_time:.2f} 秒")
+                await asyncio.sleep(wait_time)
+        
+        # 记录当前API调用
+        self.api_call_times.append(current_time)
+        self.performance_metrics['api_calls_made'] += 1
+
+    async def _handle_api_error(self, error: Exception):
+        """处理API错误"""
+        self.consecutive_errors += 1
+        
+        if self.consecutive_errors >= self.config.get('max_consecutive_errors', 5):
+            # 触发熔断器
+            self.circuit_breaker_active = True
+            self.circuit_breaker_reset_time = datetime.now() + timedelta(
+                seconds=self.config.get('error_recovery_delay', 30)
+            )
+            logger.error(f"🚨 熔断器触发: 连续错误 {self.consecutive_errors} 次")
+        
+        # 指数退避重试
+        retry_delay = self.config.get('api_retry_delay', 2) * (
+            self.config.get('api_backoff_factor', 2) ** self.consecutive_errors
+        )
+        
+        logger.warning(f"⚠️ API错误: {error}, {retry_delay} 秒后重试")
+        await asyncio.sleep(retry_delay)
+
+    async def _reset_circuit_breaker(self):
+        """重置熔断器"""
+        if (self.circuit_breaker_active and 
+            self.circuit_breaker_reset_time and 
+            datetime.now() >= self.circuit_breaker_reset_time):
+            
+            self.circuit_breaker_active = False
+            self.consecutive_errors = 0
+            logger.info("✅ 熔断器重置，恢复正常运行")
+
     async def _check_single_channel_batch(self, task, source_channel, last_message_id):
         """检查单个频道（分批模式）"""
         try:
+            # 检查熔断器状态
+            await self._reset_circuit_breaker()
+            
+            if self.circuit_breaker_active:
+                logger.warning("⚠️ 熔断器激活，跳过本次检查")
+                return
+            
+            # 检查API调用频率
+            await self._check_api_rate_limit()
+            
             channel_id = source_channel['channel_id']
             channel_name = source_channel.get('channel_name', 'Unknown')
             
             # 获取频道最新消息
             messages = []
+            max_messages = self.config.get('max_messages_per_check', 200)
             async for message in self.client.get_chat_history(
                 chat_id=channel_id, 
-                limit=100
+                limit=max_messages
             ):
                 messages.append(message)
             
@@ -1409,11 +1524,14 @@ class RealTimeMonitoringEngine:
                     last_message_id[channel_id] = messages[-1].id
                     logger.info(f"🔍 [分批] 初始化频道 {channel_name} 最新消息ID: {last_message_id[channel_id]}")
                 else:
-                    # 处理所有新消息
-                    new_messages = [msg for msg in messages if msg.id > last_message_id[channel_id]]
+                    # 处理所有新消息 - 修复：检查所有消息，不仅仅是ID递增的
+                    new_messages = []
+                    for msg in messages:
+                        if msg.id > last_message_id[channel_id]:
+                            new_messages.append(msg)
                     
                     if new_messages:
-                        logger.info(f"🔔 [分批] 检测到 {len(new_messages)} 条新消息 from {channel_name}")
+                        logger.info(f"🔔 检测到 {len(new_messages)} 条新消息 from {channel_name}")
                         
                         # 更新最新消息ID
                         last_message_id[channel_id] = messages[-1].id
@@ -1425,9 +1543,38 @@ class RealTimeMonitoringEngine:
                                 'channel_name': channel_name
                             }
                             await self._handle_new_message(task, message, source_config)
+                    else:
+                        # 即使没有新消息，也记录检查状态
+                        logger.debug(f"🔍 [分批] 频道 {channel_name} 无新消息，当前最新ID: {messages[-1].id}")
                         
         except Exception as e:
             logger.error(f"❌ [分批] 检查频道 {channel_id} 失败: {e}")
+            await self._handle_api_error(e)
+    
+    async def _monitor_performance(self):
+        """监控系统性能"""
+        while True:
+            try:
+                await asyncio.sleep(self.config.get('metrics_collection_interval', 60))
+                
+                # 计算性能指标
+                total_processed = self.performance_metrics['total_messages_processed']
+                successful = self.performance_metrics['successful_transfers']
+                failed = self.performance_metrics['failed_transfers']
+                
+                success_rate = (successful / total_processed * 100) if total_processed > 0 else 0
+                failure_rate = (failed / total_processed * 100) if total_processed > 0 else 0
+                
+                # 检查性能告警
+                if success_rate < self.config.get('performance_alert_threshold', 0.9) * 100:
+                    logger.warning(f"⚠️ 性能告警: 成功率 {success_rate:.2f}% 低于阈值")
+                
+                # 记录性能指标
+                logger.info(f"📊 性能指标: 成功率 {success_rate:.2f}%, 失败率 {failure_rate:.2f}%, "
+                          f"总消息 {total_processed}, API调用 {self.performance_metrics['api_calls_made']}")
+                
+            except Exception as e:
+                logger.error(f"❌ 性能监控失败: {e}")
     
     async def _unregister_message_handlers(self, task: RealTimeMonitoringTask):
         """移除消息处理器 - 简化版（使用全局处理器）"""
@@ -1447,9 +1594,13 @@ class RealTimeMonitoringEngine:
                                 source_config: Dict[str, Any]):
         """处理新消息"""
         try:
-            # 只在处理重要消息时记录日志
-            if message.text and len(message.text) > 50:  # 只记录有意义的文本消息
-                logger.info(f"🔔 处理消息: {message.id} from {message.chat.id} - {message.text[:50]}...")
+            # 记录所有消息处理日志
+            if message.text:
+                logger.info(f"🔔 处理消息: {message.id} from {message.chat.id} - {message.text[:100]}{'...' if len(message.text) > 100 else ''}")
+            elif message.media:
+                logger.info(f"🔔 处理媒体消息: {message.id} from {message.chat.id} - {type(message.media).__name__}")
+            else:
+                logger.info(f"🔔 处理消息: {message.id} from {message.chat.id} - 未知类型")
             
             if task.should_stop():
                 logger.info(f"⚠️ 任务已停止，跳过消息: {message.id}")
@@ -1468,7 +1619,7 @@ class RealTimeMonitoringEngine:
                     task.processed_media_groups = set()
                 
                 if media_group_id in task.processed_media_groups:
-                    logger.info(f"⚠️ 媒体组 {media_group_id} 已处理过，跳过消息: {message.id}")
+                    logger.debug(f"⚠️ 媒体组 {media_group_id} 已处理过，跳过消息: {message.id}")
                     return
                 
                 # 媒体组消息暂时不添加到processed_messages，等整个媒体组处理完成后再添加
@@ -1479,7 +1630,7 @@ class RealTimeMonitoringEngine:
                     self.processed_messages[channel_id] = set()
                 
                 if message.id in self.processed_messages[channel_id]:
-                    logger.info(f"⚠️ 消息已处理过，跳过: {message.id}")
+                    logger.debug(f"⚠️ 消息已处理过，跳过: {message.id}")
                     return
                 
                 self.processed_messages[channel_id].add(message.id)
@@ -1528,6 +1679,10 @@ class RealTimeMonitoringEngine:
             if success:
                 task.stats['successful_transfers'] += 1
                 self.global_stats['successful_transfers'] += 1
+                
+                # 更新性能指标
+                self.performance_metrics['successful_transfers'] += 1
+                self.performance_metrics['total_messages_processed'] += 1
                 # 更新源频道成功统计
                 channel_id = str(message.chat.id)
                 if channel_id in task.stats.get('source_channel_stats', {}):
@@ -1536,6 +1691,10 @@ class RealTimeMonitoringEngine:
             else:
                 task.stats['failed_transfers'] += 1
                 self.global_stats['failed_transfers'] += 1
+                
+                # 更新性能指标
+                self.performance_metrics['failed_transfers'] += 1
+                self.performance_metrics['total_messages_processed'] += 1
                 # 更新源频道失败统计
                 channel_id = str(message.chat.id)
                 if channel_id in task.stats.get('source_channel_stats', {}):
@@ -1636,11 +1795,18 @@ class RealTimeMonitoringEngine:
                 task.user_id, task.target_channel
             )
             
-            # 添加调试日志
-            logger.info(f"🔍 过滤配置: {filter_config}")
+            # 添加消息处理日志
+            logger.info(f"🔍 开始处理消息: ID={message.id} 来源={message.chat.title}")
+            if message.text:
+                logger.info(f"   文本内容: {message.text[:100]}{'...' if len(message.text) > 100 else ''}")
+            elif message.caption:
+                logger.info(f"   媒体说明: {message.caption[:100]}{'...' if len(message.caption) > 100 else ''}")
+            else:
+                logger.info(f"   媒体类型: {type(message.media).__name__ if message.media else '未知'}")
             
             # 检查是否是媒体组消息
             if hasattr(message, 'media_group_id') and message.media_group_id:
+                logger.info(f"📸 检测到媒体组消息: {message.media_group_id}")
                 # 处理媒体组消息
                 return await self._handle_media_group_message(task, message, filter_config)
             
@@ -1649,7 +1815,7 @@ class RealTimeMonitoringEngine:
                 message, filter_config
             )
             
-            logger.info(f"🔍 process_message 结果: should_process={should_process}, processed_result={processed_result}")
+            logger.debug(f"🔍 process_message 结果: should_process={should_process}")
             
             if not should_process or not processed_result:
                 task.stats['filtered_messages'] += 1
@@ -1661,9 +1827,15 @@ class RealTimeMonitoringEngine:
                 return True  # 过滤也算成功
             
             # 发送到目标频道
+            logger.info(f"🚀 开始搬运消息: {message.id} -> {task.target_channel}")
             success = await self._send_to_target_channel(
                 processed_result, task.target_channel
             )
+            
+            if success:
+                logger.info(f"✅ 消息搬运成功: {message.id}")
+            else:
+                logger.error(f"❌ 消息搬运失败: {message.id}")
             
             return success
             
@@ -1694,24 +1866,46 @@ class RealTimeMonitoringEngine:
             # 标记为正在处理
             task.processing_media_groups.add(media_group_id)
             logger.info(f"🚀 开始处理媒体组 {media_group_id}")
+            logger.info(f"   源频道: {message.chat.title} (ID: {message.chat.id})")
+            logger.info(f"   目标频道: {task.target_channel}")
             
             # 获取媒体组中的所有消息
             media_group_messages = []
             try:
                 # 添加短暂延迟，确保所有媒体组消息都已到达
-                await asyncio.sleep(0.5)
+                logger.info(f"⏳ 等待媒体组消息收集完成...")
+                await asyncio.sleep(2.0)  # 增加延迟时间
                 
-                # 获取聊天历史来找到同一媒体组的所有消息
-                async for msg in self.client.get_chat_history(message.chat.id, limit=50):
+                # 使用更可靠的方法：获取更大的消息范围来查找媒体组
+                logger.info(f"🔍 开始搜索媒体组 {media_group_id} 的所有消息...")
+                
+                # 获取最近200条消息来查找媒体组
+                logger.info(f"🔍 搜索媒体组消息: 频道ID={message.chat.id}, 媒体组ID={media_group_id}")
+                async for msg in self.client.get_chat_history(message.chat.id, limit=200):
                     if (hasattr(msg, 'media_group_id') and 
-                        msg.media_group_id == media_group_id and 
-                        msg.id <= message.id):  # 只处理当前消息及之前的消息
+                        msg.media_group_id == media_group_id):
                         media_group_messages.append(msg)
+                        logger.info(f"🔍 找到媒体组消息: ID={msg.id}, 类型={type(msg.media).__name__ if msg.media else 'text'}")
                 
                 # 按消息ID排序
                 media_group_messages.sort(key=lambda x: x.id)
                 
-                logger.info(f"🔍 找到媒体组 {media_group_id} 的 {len(media_group_messages)} 条消息")
+                logger.info(f"🔍 媒体组搜索完成: 找到 {len(media_group_messages)} 条消息")
+                
+                # 如果找到的消息太少，尝试等待更长时间并重新搜索
+                if len(media_group_messages) < 2:
+                    logger.warning(f"⚠️ 媒体组消息数量较少({len(media_group_messages)})，等待更长时间...")
+                    await asyncio.sleep(2.0)
+                    
+                    # 重新搜索
+                    media_group_messages = []
+                    async for msg in self.client.get_chat_history(message.chat.id, limit=200):
+                        if (hasattr(msg, 'media_group_id') and 
+                            msg.media_group_id == media_group_id):
+                            media_group_messages.append(msg)
+                    
+                    media_group_messages.sort(key=lambda x: x.id)
+                    logger.info(f"🔍 重新搜索后找到媒体组 {media_group_id} 的 {len(media_group_messages)} 条消息")
                 
             except Exception as e:
                 logger.error(f"❌ 获取媒体组消息失败: {e}")
@@ -1728,9 +1922,19 @@ class RealTimeMonitoringEngine:
             # 处理媒体组中的每条消息
             processed_messages = []
             for msg in media_group_messages:
+                # 对于媒体组消息，使用特殊的处理逻辑
+                # 媒体组中的消息即使没有文本也应该被处理（只要不是完全空白）
                 processed_result, should_process = self.message_engine.process_message(
                     msg, filter_config
                 )
+                
+                # 媒体组消息的特殊处理：即使没有文本内容，只要有媒体就应该处理
+                if not should_process and msg.media:
+                    logger.info(f"🔧 媒体组消息 {msg.id} 被过滤但包含媒体，强制处理")
+                    # 重新处理，跳过空白检测
+                    processed_result, should_process = self.message_engine.process_message(
+                        msg, filter_config, skip_blank_check=True
+                    )
                 
                 if should_process and processed_result:
                     processed_messages.append(processed_result)
@@ -1846,6 +2050,9 @@ class RealTimeMonitoringEngine:
                 # 使用第一个有文本的项目作为caption
                 if not caption and msg_data.get('text'):
                     caption = msg_data['text']
+                    # 添加小尾巴（如果配置了）
+                    if hasattr(self.message_engine, 'add_tail_text'):
+                        caption = self.message_engine.add_tail_text(caption, True)  # 媒体组肯定有媒体
                 
                 # 使用第一个有按钮的项目作为按钮
                 if not buttons and msg_data.get('buttons'):
@@ -1920,6 +2127,14 @@ class RealTimeMonitoringEngine:
             # 获取处理后的文本和按钮
             text = processed_result.get('text', '')
             buttons = processed_result.get('buttons')
+            
+            # 添加小尾巴（如果配置了）
+            if text and hasattr(self.message_engine, 'add_tail_text'):
+                has_media = bool(original_message.photo or original_message.video or 
+                               original_message.document or original_message.audio or 
+                               original_message.voice or original_message.animation or 
+                               original_message.sticker)
+                text = self.message_engine.add_tail_text(text, has_media)
             
             # 验证目标频道ID
             if not target_channel:
@@ -2041,19 +2256,106 @@ class RealTimeMonitoringEngine:
             return False
     
     async def _get_channel_filter_config(self, user_id: str, target_channel: str) -> Dict[str, Any]:
-        """获取频道过滤配置（复用频道管理的配置）"""
+        """获取频道过滤配置（优先使用独立过滤配置）"""
         try:
+            # 添加缓存机制，避免重复加载
+            cache_key = f"{user_id}_{target_channel}"
+            if hasattr(self, '_filter_config_cache') and cache_key in self._filter_config_cache:
+                return self._filter_config_cache[cache_key]
+            
+            if not hasattr(self, '_filter_config_cache'):
+                self._filter_config_cache = {}
+            
             # 获取用户配置
             user_config = await data_manager.get_user_config(user_id)
             
-            # 查找频道配置
+            # 减少调试信息输出
+            logger.debug(f"🔍 查找频道 {target_channel} 的过滤配置")
+            
+            # 首先查找admin_channel_filters中的配置
+            admin_channel_filters = user_config.get('admin_channel_filters', {})
+            
+            # 尝试直接匹配
+            if str(target_channel) in admin_channel_filters:
+                filter_config = admin_channel_filters[str(target_channel)]
+                logger.info(f"✅ 使用频道 {target_channel} 的admin_channel_filters配置")
+                self._filter_config_cache[cache_key] = filter_config
+                return filter_config
+            
+            # 如果直接匹配失败，尝试通过频道用户名查找对应的频道ID
+            admin_channels = user_config.get('admin_channels', [])
+            for channel in admin_channels:
+                channel_id = str(channel.get('id', ''))
+                channel_username = channel.get('username', '')
+                
+                # 检查是否匹配频道ID或用户名
+                if (str(target_channel) == channel_id or 
+                    str(target_channel) == channel_username or
+                    str(target_channel) == f"@{channel_username}"):
+                    
+                    # 在admin_channel_filters中查找该频道ID的配置
+                       if channel_id in admin_channel_filters:
+                           filter_config = admin_channel_filters[channel_id]
+                           logger.info(f"✅ 通过频道映射找到配置: {target_channel} -> {channel_id}")
+                           self._filter_config_cache[cache_key] = filter_config
+                           return filter_config
+            
+            # 如果没有admin_channel_filters配置，查找channel_filters中的配置
+            channel_filters = user_config.get('channel_filters', {})
+            if str(target_channel) in channel_filters:
+                filter_config = channel_filters[str(target_channel)]
+                logger.info(f"✅ 使用频道 {target_channel} 的channel_filters配置")
+                self._filter_config_cache[cache_key] = filter_config
+                return filter_config
+            
+            # 如果没有独立过滤配置，查找admin_channels中的配置
             admin_channels = user_config.get('admin_channels', [])
             for channel in admin_channels:
                 if str(channel.get('id')) == str(target_channel):
+                    logger.info(f"✅ 使用频道 {target_channel} 的admin_channels配置")
                     return channel.get('filter_config', {})
             
+            # 如果找不到配置，尝试从频道数据管理器获取频道信息
+            logger.info(f"⚠️ 频道 {target_channel} 未找到独立过滤配置，尝试从频道数据管理器获取...")
+            
+            # 尝试通过频道数据管理器获取频道信息
+            try:
+                from channel_data_manager import ChannelDataManager
+                channel_data_manager = ChannelDataManager()
+                all_channels = channel_data_manager.get_all_channels()
+                
+                # 查找匹配的频道
+                channel_id = None
+                for channel in all_channels:
+                    channel_username = channel.get('username', '')
+                    if (str(target_channel) == channel_username or
+                        str(target_channel) == f"@{channel_username}" or
+                        str(target_channel) == str(channel.get('id', ''))):
+                        channel_id = str(channel.get('id', ''))
+                        logger.info(f"✅ 找到频道映射: {target_channel} -> {channel_id}")
+                        break
+                
+                if channel_id:
+                    # 自动初始化频道配置
+                    try:
+                        from lsjmain import TelegramBot  # 导入主程序类
+                        bot_app = TelegramBot()
+                        channel_filters = await bot_app._init_admin_channel_filters(user_id, channel_id)
+                        logger.info(f"✅ 自动初始化频道配置成功: {target_channel} -> {channel_id}")
+                        return channel_filters
+                    except Exception as e:
+                        logger.warning(f"⚠️ 自动初始化频道配置失败: {e}")
+                else:
+                    logger.warning(f"⚠️ 在频道数据管理器中未找到频道: {target_channel}")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ 从频道数据管理器获取频道信息失败: {e}")
+            
             # 返回默认配置
-            return DEFAULT_USER_CONFIG.copy()
+            logger.info(f"⚠️ 使用全局默认配置（频道 {target_channel} 未配置独立过滤）")
+            default_config = DEFAULT_USER_CONFIG.copy()
+            self._filter_config_cache[cache_key] = default_config
+            return default_config
             
         except Exception as e:
             logger.error(f"❌ 获取频道过滤配置失败: {e}")
