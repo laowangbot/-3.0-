@@ -528,9 +528,20 @@ async def get_user_api_manager() -> UserAPIManager:
     """获取 User API 管理器实例"""
     global user_api_manager
     if user_api_manager is None:
-        # 从环境变量或配置文件获取 API 凭据
+        # 优先尝试从通用环境变量获取 API 凭据
         api_id = int(os.getenv('API_ID', '0'))
         api_hash = os.getenv('API_HASH', '')
+        
+        # 如果通用环境变量未设置，尝试从机器人特定环境变量获取
+        if not api_id or not api_hash:
+            # 获取机器人实例名称
+            bot_instance = os.getenv('BOT_INSTANCE', 'default')
+            if bot_instance and bot_instance != 'default':
+                # 构建机器人特定的环境变量名
+                prefix = bot_instance.upper()
+                api_id = int(os.getenv(f'{prefix}_API_ID', '0'))
+                api_hash = os.getenv(f'{prefix}_API_HASH', '')
+                logger.info(f"🔍 尝试从机器人特定环境变量获取API配置: {prefix}_API_ID={api_id}, {prefix}_API_HASH={'已设置' if api_hash else '未设置'}")
         
         if not api_id or not api_hash:
             raise ValueError("API_ID 和 API_HASH 环境变量未设置")

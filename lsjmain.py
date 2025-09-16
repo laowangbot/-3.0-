@@ -177,14 +177,38 @@ class TelegramBot:
         # 尝试初始化 User API 管理器
         try:
             from user_api_manager import UserAPIManager
-            # 使用配置管理器获取正确的API ID和Hash
-            api_id = self.config.get('api_id', 0)
-            api_hash = self.config.get('api_hash', '')
-            if api_id and api_hash:
-                self.user_api_manager = UserAPIManager(api_id, api_hash)
-                logger.info("ℹ️ User API 管理器已创建，等待初始化")
+            
+            # 优先从环境变量直接获取API ID和Hash
+            bot_instance = os.getenv('BOT_INSTANCE', 'default')
+            bot_prefix = f"{bot_instance.upper()}_"
+            
+            api_id_str = os.getenv(f"{bot_prefix}API_ID") or os.getenv('API_ID')
+            api_hash = os.getenv(f"{bot_prefix}API_HASH") or os.getenv('API_HASH')
+            
+            logger.info(f"🔍 User API 管理器初始化检查:")
+            logger.info(f"   BOT_INSTANCE: {bot_instance}")
+            logger.info(f"   环境变量前缀: {bot_prefix}")
+            logger.info(f"   {bot_prefix}API_ID: {api_id_str}")
+            logger.info(f"   {bot_prefix}API_HASH: {api_hash}")
+            
+            if api_id_str and api_hash:
+                try:
+                    api_id = int(api_id_str)
+                    self.user_api_manager = UserAPIManager(api_id, api_hash)
+                    logger.info("✅ User API 管理器已创建，等待初始化")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"❌ API_ID格式错误: {api_id_str}, 错误: {e}")
+                    self.user_api_manager = None
             else:
-                logger.warning("⚠️ 无法创建 User API 管理器，环境变量未设置")
+                # 回退到配置管理器
+                api_id = self.config.get('api_id', 0)
+                api_hash = self.config.get('api_hash', '')
+                if api_id and api_hash:
+                    self.user_api_manager = UserAPIManager(api_id, api_hash)
+                    logger.info("ℹ️ User API 管理器已从配置创建，等待初始化")
+                else:
+                    logger.warning("⚠️ 无法创建 User API 管理器，环境变量和配置都未设置")
+                    self.user_api_manager = None
         except Exception as e:
             logger.warning(f"⚠️ 创建 User API 管理器失败: {e}")
             self.user_api_manager = None
@@ -459,8 +483,21 @@ class TelegramBot:
                 # 即使初始化失败，也创建一个管理器实例，以便后续使用
                 try:
                     from user_api_manager import UserAPIManager
+                    # 优先尝试从通用环境变量获取 API 凭据
                     api_id = int(os.getenv('API_ID', '0'))
                     api_hash = os.getenv('API_HASH', '')
+                    
+                    # 如果通用环境变量未设置，尝试从机器人特定环境变量获取
+                    if not api_id or not api_hash:
+                        # 获取机器人实例名称
+                        bot_instance = os.getenv('BOT_INSTANCE', 'default')
+                        if bot_instance and bot_instance != 'default':
+                            # 构建机器人特定的环境变量名
+                            prefix = bot_instance.upper()
+                            api_id = int(os.getenv(f'{prefix}_API_ID', '0'))
+                            api_hash = os.getenv(f'{prefix}_API_HASH', '')
+                            logger.info(f"🔍 尝试从机器人特定环境变量获取API配置: {prefix}_API_ID={api_id}, {prefix}_API_HASH={'已设置' if api_hash else '未设置'}")
+                    
                     logger.info(f"🔍 环境变量检查: API_ID={api_id}, API_HASH={'已设置' if api_hash else '未设置'}")
                     if api_id and api_hash:
                         self.user_api_manager = UserAPIManager(api_id, api_hash)
@@ -821,16 +858,12 @@ class TelegramBot:
                     )
                     return True
                 else:
-                    # 未登录，显示登录选项
-                    api_id = self.config.get('api_id', 0)
-                    api_hash = self.config.get('api_hash', '')
-                    
-                    if api_id and api_hash:
-                        web_auth_url = f"https://my.telegram.org/auth?to=apps&app_id={api_id}"
+                    # 在Render环境中，如果没有User API管理器，显示提示
+                    if not self.user_api_manager:
                         await message.reply_text(
                             "🌐 **Render环境User API登录**\n\n"
                             "💡 **方法1：Telegram Web授权**\n"
-                            f"🔗 点击链接：{web_auth_url}\n"
+                            "🔗 点击链接：https://my.telegram.org/auth?to=apps&app_id=29112215\n"
                             "1. 使用您的Telegram账号登录\n"
                             "2. 授权应用访问\n"
                             "3. 获取API凭据\n\n"
@@ -840,17 +873,8 @@ class TelegramBot:
                             "💡 **方法3：使用Bot API模式**\n"
                             "🔧 当前使用Bot API模式，功能正常"
                         )
-                    else:
-                        await message.reply_text(
-                            "🌐 **Render环境限制**\n\n"
-                            "❌ 在Render环境中无法接收手机验证码\n"
-                            "💡 **解决方案：**\n"
-                            "1. 在本地完成User API登录\n"
-                            "2. 将session文件上传到Render\n"
-                            "3. 或使用Bot API模式进行搬运\n\n"
-                            "🔧 当前使用Bot API模式，功能正常"
-                        )
-                    return True
+                        return True
+                    # 如果有User API管理器，继续处理登录流程
             
             if not self.user_api_manager:
                 return False

@@ -315,7 +315,19 @@ class MultiBotDataManager:
             return []
         
         try:
-            # 检查数据库连接
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager and self.optimized_manager.initialized:
+                # 使用优化的Firebase管理器
+                collection = f"bots/{self.bot_id}/users"
+                document = str(user_id)
+                
+                doc_data = await get_doc(collection, document, self.bot_id)
+                if doc_data:
+                    return doc_data.get('channel_pairs', [])
+                else:
+                    return []
+            
+            # 回退到标准Firebase连接
             if self.db is None:
                 logger.warning(f"Firebase数据库连接为空，返回空列表 (Bot: {self.bot_id})")
                 return []
@@ -538,6 +550,14 @@ class MultiBotDataManager:
             return []
         
         try:
+            # 优先使用优化的Firebase管理器
+            if self.optimized_manager and self.optimized_manager.initialized:
+                # 使用优化的Firebase管理器获取用户列表
+                collection = f"bots/{self.bot_id}/users"
+                docs = await self.optimized_manager.get_collection(collection)
+                return [doc.id for doc in docs] if docs else []
+            
+            # 回退到标准Firebase连接
             users_ref = self.db.collection('bots').document(self.bot_id).collection('users')
             docs = users_ref.stream()
             return [doc.id for doc in docs]
@@ -593,7 +613,12 @@ class MultiBotDataManager:
                 }
             
             # 测试数据库连接
-            self.db.collection('bots').document(self.bot_id).collection('health').document('test').get()
+            if self.optimized_manager and self.optimized_manager.initialized:
+                # 使用优化的Firebase管理器进行健康检查
+                await self.optimized_manager.get_document('health', 'test')
+            else:
+                # 回退到标准Firebase连接
+                self.db.collection('bots').document(self.bot_id).collection('health').document('test').get()
             
             return {
                 'status': 'healthy',
