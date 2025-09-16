@@ -411,4 +411,4 @@ __all__ = [
 
 
 # 简化版监听系统UI
-# from simple_monitoring_ui import *  # 暂时注释掉，因为该模块不存在
+from simple_monitoring_ui import *
