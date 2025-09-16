@@ -13551,70 +13551,19 @@ t.me/test_channel
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            # 智能处理消息更新，避免MESSAGE_NOT_MODIFIED错误
+            # 简化处理：直接尝试更新，如果失败就忽略
             try:
-                current_text = callback_query.message.text
-                current_markup = callback_query.message.reply_markup
-                
-                # 检查内容和按钮是否都需要更新
-                text_changed = current_text != config_text
-                
-                # 生成新的按钮布局
-                new_markup = generate_button_layout(buttons)
-                
-                # 检查按钮是否改变（通过比较按钮文本）
-                markup_changed = False
-                if current_markup and new_markup:
-                    current_buttons = []
-                    new_buttons = []
-                    
-                    # 提取当前按钮文本
-                    if hasattr(current_markup, 'inline_keyboard'):
-                        for row in current_markup.inline_keyboard:
-                            for button in row:
-                                current_buttons.append(button.text)
-                    
-                    # 提取新按钮文本
-                    if hasattr(new_markup, 'inline_keyboard'):
-                        for row in new_markup.inline_keyboard:
-                            for button in row:
-                                new_buttons.append(button.text)
-                    
-                    markup_changed = current_buttons != new_buttons
-                elif not current_markup and new_markup:
-                    markup_changed = True
-                
-                # 根据变化情况决定更新策略
-                if text_changed or markup_changed:
-                    if text_changed and markup_changed:
-                        # 内容和按钮都改变，更新整个消息
-                        await callback_query.edit_message_text(
-                            config_text,
-                            reply_markup=new_markup
-                        )
-                    elif text_changed:
-                        # 只有内容改变，更新文本和按钮
-                        await callback_query.edit_message_text(
-                            config_text,
-                            reply_markup=new_markup
-                        )
-                    elif markup_changed:
-                        # 只有按钮改变，只更新按钮
-                        await callback_query.edit_message_reply_markup(
-                            reply_markup=new_markup
-                        )
-                    else:
-                        # 都没有改变，不需要更新
-                        logger.debug("消息内容和按钮都未改变，跳过更新")
-                else:
-                    # 都没有改变，不需要更新
-                    logger.debug("消息内容和按钮都未改变，跳过更新")
-                    
+                await callback_query.edit_message_text(
+                    config_text,
+                    reply_markup=generate_button_layout(buttons)
+                )
             except Exception as edit_error:
                 if "MESSAGE_NOT_MODIFIED" in str(edit_error):
-                    # 如果仍然出现MESSAGE_NOT_MODIFIED错误，记录日志但不抛出异常
-                    logger.warning("消息未修改，跳过更新操作")
+                    # 如果消息未修改，说明内容相同，这是正常的，不需要报错
+                    logger.debug("消息内容未改变，跳过更新操作")
                 else:
+                    # 其他错误需要处理
+                    logger.error(f"更新消息失败: {edit_error}")
                     raise edit_error
             
         except Exception as e:
