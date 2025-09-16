@@ -854,6 +854,19 @@ class TelegramBot:
             logger.error(f"❌ 登出 User API 失败: {e}")
             await message.reply_text("❌ 操作失败，请稍后重试")
     
+    async def _safe_edit_message(self, callback_query: CallbackQuery, text: str, reply_markup=None):
+        """安全的消息编辑函数，避免MESSAGE_NOT_MODIFIED错误"""
+        try:
+            await callback_query.edit_message_text(text, reply_markup=reply_markup)
+        except Exception as e:
+            if "MESSAGE_NOT_MODIFIED" in str(e):
+                # 消息内容未改变，这是正常的，记录debug日志
+                logger.debug("消息内容未改变，跳过更新操作")
+            else:
+                # 其他错误需要处理
+                logger.error(f"更新消息失败: {e}")
+                raise e
+
     async def _handle_user_api_login_flow(self, message: Message) -> bool:
         """处理 User API 登录流程"""
         try:
@@ -3547,7 +3560,8 @@ class TelegramBot:
             multi_select_state['current_channel_index'] = channel_index
             multi_select_state['waiting_for_input'] = True
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -3967,7 +3981,8 @@ class TelegramBot:
                 [("🔙 返回主菜单", "show_main_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -4212,7 +4227,8 @@ class TelegramBot:
                 [("🔙 返回主菜单", "show_main_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -4464,7 +4480,8 @@ class TelegramBot:
                 [("🔙 返回主菜单", "show_main_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -4944,7 +4961,8 @@ class TelegramBot:
                 [("🔙 返回主菜单", "show_main_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -5777,7 +5795,8 @@ class TelegramBot:
                 [("🔙 返回过滤配置", f"admin_channel_filters:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -5876,7 +5895,8 @@ class TelegramBot:
                 [("🔙 返回过滤配置", f"admin_channel_filters:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -6064,7 +6084,8 @@ class TelegramBot:
                 [("🔙 返回过滤配置", f"admin_channel_filters:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -6235,7 +6256,8 @@ class TelegramBot:
                 [("🔙 返回过滤配置", f"admin_channel_filters:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -6306,7 +6328,8 @@ class TelegramBot:
                 [("🔙 返回按钮过滤", f"admin_channel_buttons_removal:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -6427,7 +6450,8 @@ class TelegramBot:
                 [("🔙 返回过滤配置", f"admin_channel_filters:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -6505,7 +6529,8 @@ class TelegramBot:
                 [("🔙 返回过滤配置", f"admin_channel_filters:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -6824,7 +6849,8 @@ class TelegramBot:
                 [("🔙 返回频道列表", "show_channel_admin_test")]
             ])
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -7227,7 +7253,8 @@ class TelegramBot:
                 [("🔙 返回小尾巴设置", f"admin_channel_tail_text:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -7258,7 +7285,8 @@ class TelegramBot:
                 [("🔙 返回小尾巴设置", f"admin_channel_tail_text:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -7343,7 +7371,8 @@ class TelegramBot:
                 [("🔙 返回按钮设置", f"admin_channel_buttons:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -9216,7 +9245,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回增强版链接过滤", f"admin_channel_links_removal:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -11831,7 +11861,8 @@ https://t.me/channel_name 1-10
             ]
             
             # 编辑消息
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -11917,7 +11948,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -12053,7 +12085,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -12154,7 +12187,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回功能设定", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -12239,7 +12273,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回", return_callback)]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -12332,7 +12367,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回", return_callback)]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -12371,7 +12407,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -13023,7 +13060,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回小尾巴设置", f"channel_tail_text:{pair_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -13101,7 +13139,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回按钮设置", f"channel_buttons:{pair_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -13351,7 +13390,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -13401,7 +13441,8 @@ https://t.me/channel_name 1-10
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -13551,20 +13592,12 @@ t.me/test_channel
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            # 简化处理：直接尝试更新，如果失败就忽略
-            try:
-                await callback_query.edit_message_text(
-                    config_text,
-                    reply_markup=generate_button_layout(buttons)
-                )
-            except Exception as edit_error:
-                if "MESSAGE_NOT_MODIFIED" in str(edit_error):
-                    # 如果消息未修改，说明内容相同，这是正常的，不需要报错
-                    logger.debug("消息内容未改变，跳过更新操作")
-                else:
-                    # 其他错误需要处理
-                    logger.error(f"更新消息失败: {edit_error}")
-                    raise edit_error
+            # 使用安全的消息编辑函数
+            await self._safe_edit_message(
+                callback_query, 
+                config_text, 
+                reply_markup=generate_button_layout(buttons)
+            )
             
         except Exception as e:
             logger.error(f"显示增强过滤配置失败: {e}")
@@ -16124,7 +16157,8 @@ t.me/test_channel
                 [("🔙 返回主菜单", "show_main_menu")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -16216,7 +16250,8 @@ t.me/test_channel
                 [("🔙 返回过滤设置", f"channel_filters:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -16318,7 +16353,8 @@ t.me/test_channel
                 [("🔙 返回过滤设置", f"channel_filters:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -16445,7 +16481,8 @@ t.me/test_channel
                 [("🔙 返回频道详情", f"edit_channel_pair:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -16542,7 +16579,8 @@ t.me/test_channel
             
             buttons = [[("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -16903,7 +16941,8 @@ t.me/test_channel
             
             buttons = [[("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -16981,7 +17020,8 @@ t.me/test_channel
                 [("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -17172,7 +17212,8 @@ t.me/test_channel
                 [("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -17240,7 +17281,8 @@ t.me/test_channel
                 [("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -17319,7 +17361,8 @@ t.me/test_channel
                 [("🔙 返回过滤配置", f"channel_filters:{pair['id']}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -17822,7 +17865,8 @@ t.me/test_channel
             # 保存配置
             await self.data_manager.save_user_config(user_id, user_config)
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -20291,7 +20335,8 @@ t.me/test_channel
                 [("🔙 返回频道管理", f"admin_channel_manage:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -20379,7 +20424,8 @@ t.me/test_channel
                 [("❌ 取消", f"admin_channel_message_management:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -21167,7 +21213,8 @@ t.me/test_channel
                 [("❌ 取消", f"admin_channel_message_management:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -21257,7 +21304,8 @@ t.me/test_channel
                 [("❌ 取消", f"admin_channel_message_management:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
@@ -22236,7 +22284,8 @@ t.me/test_channel
                 [("🔙 返回信息管理", f"admin_channel_message_management:{channel_id}")]
             ]
             
-            await callback_query.edit_message_text(
+            await self._safe_edit_message(
+                callback_query,
                 config_text,
                 reply_markup=generate_button_layout(buttons)
             )
