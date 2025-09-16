@@ -138,8 +138,17 @@ class MultiBotConfigManager:
         try:
             logger.info(f"🔍 开始从Render环境变量加载机器人 '{bot_name}' 的配置")
             
+            # 获取BOT_INSTANCE环境变量来确定实际的机器人名称
+            bot_instance = os.getenv('BOT_INSTANCE')
+            if bot_instance:
+                # 如果BOT_INSTANCE设置了，使用它作为机器人名称
+                actual_bot_name = bot_instance.lower()
+                logger.info(f"🔍 检测到BOT_INSTANCE: {bot_instance}, 使用机器人名称: {actual_bot_name}")
+            else:
+                actual_bot_name = bot_name
+            
             # 检查是否有特定机器人的环境变量前缀
-            bot_prefix = f"{bot_name.upper()}_"
+            bot_prefix = f"{actual_bot_name.upper()}_"
             
             # 获取API ID和API Hash
             api_id_str = os.getenv(f"{bot_prefix}API_ID") or os.getenv('API_ID')
@@ -149,7 +158,9 @@ class MultiBotConfigManager:
             bot_token = os.getenv(f"{bot_prefix}BOT_TOKEN") or os.getenv('BOT_TOKEN')
             
             logger.info(f"🔍 环境变量检查:")
-            logger.info(f"   BOT_INSTANCE: {os.getenv('BOT_INSTANCE')}")
+            logger.info(f"   BOT_INSTANCE: {bot_instance}")
+            logger.info(f"   实际机器人名称: {actual_bot_name}")
+            logger.info(f"   环境变量前缀: {bot_prefix}")
             logger.info(f"   {bot_prefix}API_ID: {api_id_str}")
             logger.info(f"   {bot_prefix}API_HASH: {api_hash_str}")
             logger.info(f"   {bot_prefix}BOT_TOKEN: {bot_token[:10] + '...' if bot_token else 'None'}")
@@ -170,7 +181,7 @@ class MultiBotConfigManager:
                 api_id = 0
             
             config = {
-                "bot_name": bot_name,
+                "bot_name": actual_bot_name,
                 "bot_token": bot_token,
                 "api_id": api_id,
                 "api_hash": api_hash_str,
@@ -178,8 +189,8 @@ class MultiBotConfigManager:
                 "use_local_storage": os.getenv(f"{bot_prefix}USE_LOCAL_STORAGE", "false").lower() == "true",
                 "is_render": True,
                 "port": int(os.getenv('PORT', 8080)),
-                "session_name": f"render_bot_session_{bot_name}",
-                "description": f"机器人 {bot_name} 的Render配置"
+                "session_name": f"render_bot_session_{actual_bot_name}",
+                "description": f"机器人 {actual_bot_name} 的Render配置"
             }
             
             logger.info(f"🔍 配置验证结果:")
@@ -188,7 +199,7 @@ class MultiBotConfigManager:
             logger.info(f"   api_hash: {'✅' if config['api_hash'] and config['api_hash'] != 'your_api_hash' else '❌'}")
             
             if self.validate_bot_config(config):
-                logger.info(f"✅ 已从Render环境变量加载机器人 '{bot_name}' 的配置")
+                logger.info(f"✅ 已从Render环境变量加载机器人 '{actual_bot_name}' 的配置")
                 return config
             else:
                 logger.error(f"❌ Render环境变量配置不完整")
