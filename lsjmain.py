@@ -115,6 +115,11 @@ class TelegramBot:
     def _save_user_api_status(self):
         """保存User API登录状态"""
         try:
+            # 在Render环境中，不保存到本地文件
+            if self.config.get('is_render', False):
+                logger.info(f"🌐 Render环境：User API状态已更新: {self.user_api_logged_in}")
+                return
+            
             status_data = {
                 'user_api_logged_in': self.user_api_logged_in,
                 'last_updated': datetime.now().isoformat()
@@ -135,6 +140,12 @@ class TelegramBot:
     def _load_user_api_status(self):
         """加载User API登录状态"""
         try:
+            # 在Render环境中，不使用本地状态文件，总是重置为False
+            if self.config.get('is_render', False):
+                logger.info("🌐 Render环境：重置User API登录状态")
+                self.user_api_logged_in = False
+                return
+            
             status_file = f"data/{self.bot_id}/user_api_status.json"
             if os.path.exists(status_file):
                 with open(status_file, 'r', encoding='utf-8') as f:
@@ -848,15 +859,30 @@ class TelegramBot:
         try:
             # 检查是否在Render环境中
             if self.config.get('is_render', False):
-                # 检查User API是否已经登录
-                if self.user_api_logged_in and self.user_api_manager:
-                    # 已经登录，不显示登录提示
-                    await message.reply_text(
-                        "✅ **User API已登录**\n\n"
-                        "🔧 当前使用User API模式，功能正常\n"
-                        "💡 如需重新登录，请联系管理员"
-                    )
-                    return True
+                # 检查User API是否已经登录 - 添加实际验证
+                if self.user_api_logged_in and self.user_api_manager and self.user_api_manager.is_logged_in:
+                    # 验证实际的登录状态
+                    try:
+                        me = await self.user_api_manager.client.get_me()
+                        if me:
+                            # 真正已登录，不显示登录提示
+                            await message.reply_text(
+                                "✅ **User API已登录**\n\n"
+                                "🔧 当前使用User API模式，功能正常\n"
+                                "💡 如需重新登录，请联系管理员"
+                            )
+                            return True
+                        else:
+                            # 登录状态无效，重置状态
+                            logger.warning("🔍 User API状态无效，重置登录状态")
+                            self.user_api_logged_in = False
+                            self.user_api_manager.is_logged_in = False
+                    except Exception as e:
+                        # 登录状态验证失败，重置状态
+                        logger.warning(f"🔍 User API状态验证失败: {e}，重置登录状态")
+                        self.user_api_logged_in = False
+                        if self.user_api_manager:
+                            self.user_api_manager.is_logged_in = False
                 else:
                     # 在Render环境中，如果没有User API管理器，显示提示
                     if not self.user_api_manager:
@@ -13529,10 +13555,28 @@ t.me/test_channel
                 [("🔙 返回功能配置", "show_feature_config_menu")]
             ]
             
-            await callback_query.edit_message_text(
-                config_text,
-                reply_markup=generate_button_layout(buttons)
-            )
+            # 检查当前消息内容，避免MESSAGE_NOT_MODIFIED错误
+            try:
+                current_text = callback_query.message.text
+                if current_text == config_text:
+                    # 内容相同，只更新按钮
+                    await callback_query.edit_message_reply_markup(
+                        reply_markup=generate_button_layout(buttons)
+                    )
+                else:
+                    # 内容不同，更新整个消息
+                    await callback_query.edit_message_text(
+                        config_text,
+                        reply_markup=generate_button_layout(buttons)
+                    )
+            except Exception as edit_error:
+                if "MESSAGE_NOT_MODIFIED" in str(edit_error):
+                    # 如果消息未修改，只更新按钮
+                    await callback_query.edit_message_reply_markup(
+                        reply_markup=generate_button_layout(buttons)
+                    )
+                else:
+                    raise edit_error
             
         except Exception as e:
             logger.error(f"显示增强过滤配置失败: {e}")
