@@ -140,10 +140,10 @@ class TelegramBot:
     def _load_user_api_status(self):
         """加载User API登录状态"""
         try:
-            # 在Render环境中，不使用本地状态文件，总是重置为False
+            # 在Render环境中，不使用本地状态文件，但不强制重置状态
             if self.config.get('is_render', False):
-                logger.info("🌐 Render环境：重置User API登录状态")
-                self.user_api_logged_in = False
+                logger.info("🌐 Render环境：使用默认User API状态")
+                self.user_api_logged_in = False  # 默认值，但允许后续更新
                 return
             
             status_file = f"data/{self.bot_id}/user_api_status.json"
