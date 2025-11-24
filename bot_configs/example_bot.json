@@ -1,0 +1,14 @@
+{
+  "bot_name": "example_bot",
+  "bot_token": "your_bot_token",
+  "api_id": "your_api_id",
+  "api_hash": "your_api_hash",
+  "firebase_project_id": "your_project_id",
+  "use_local_storage": true,
+  "is_render": false,
+  "port": 8080,
+  "session_name": "bot_session_example_bot",
+  "description": "机器人 example_bot 的配置",
+  "env_file": ".env.example_bot",
+  "render_service": "example_bot-service"
+}

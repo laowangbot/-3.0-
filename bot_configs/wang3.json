@@ -1,0 +1,14 @@
+{
+  "bot_name": "wang3",
+  "bot_token": "8293428958:AAHKEGZN1dRWr0ubOT2rj32PJuFwDX49O-0",
+  "api_id": "29112215",
+  "api_hash": "ddd2a2c75e3018ff6abf0aa4add47047",
+  "firebase_project_id": "your_project_id",
+  "use_local_storage": true,
+  "is_render": false,
+  "port": 8065,
+  "session_name": "bot_session_wang3",
+  "description": "机器人 wang3 的配置",
+  "env_file": ".env.wang3",
+  "render_service": "wang3-service"
+}

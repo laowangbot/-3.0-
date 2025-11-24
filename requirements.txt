@@ -1,0 +1,24 @@
+# 核心依赖
+pyrogram>=2.0.0
+tgcrypto>=1.2.0
+
+# Web服务依赖
+aiohttp>=3.8.0
+
+# 数据处理依赖
+firebase-admin>=6.0.0
+psutil>=5.9.0
+
+# 配置管理依赖
+python-dotenv>=1.0.0
+
+# 日志处理依赖
+colorlog>=6.7.0
+
+# AI服务依赖
+google-generativeai>=0.7.0
+
+# 异步处理依赖
+asyncio-mqtt>=0.11.0
+
+# 其他工具依赖

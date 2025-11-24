@@ -1,0 +1,15 @@
+{
+  "bot_name": "esou_bot",
+  "bot_token": "8279201247:AAEBpbzLIoyzIYa-pVah8E9aou_vkZsZZ7Y",
+  "api_id": "23033388",
+  "api_hash": "2f91330cc783a38291b0eb8f46f2ee2a",
+  "firebase_project_id": "your_project_id",
+  "use_local_storage": true,
+  "is_render": false,
+  "port": 8092,
+  "session_name": "bot_session_esou_bot",
+  "description": "本机机器人 esou_bot 的配置",
+  "env_file": ".env.esou_bot",
+  "render_service": "esou_bot-service"
+}
+
