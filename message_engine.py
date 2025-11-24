@@ -503,8 +503,7 @@ class MessageEngine:
         # 增强过滤处理
         # 只要开启了增强过滤 OR 开启了移除链接，就应用增强过滤器
         should_apply_enhanced_filter = (
-            (effective_config.get('enhanced_filter_enabled', False) or 
-             effective_config.get('remove_links', False)) and 
+            effective_config.get('enhanced_filter_enabled', False) and 
             ENHANCED_FILTER_AVAILABLE
         )
         
