@@ -588,19 +588,13 @@ class CloningEngine:
                     'content_removal': channel_filters.get('content_removal', False),
                     'content_removal_mode': channel_filters.get('content_removal_mode', 'text_only'),
                     
-                    # 链接移除 - 映射到增强链接过滤
-                    'remove_links': channel_filters.get('remove_links', channel_filters.get('links_removal', False)),
-                    'remove_magnet_links': channel_filters.get('remove_magnet_links', False),
-                    'remove_all_links': channel_filters.get('remove_all_links', False),
-                    'remove_links_mode': channel_filters.get('remove_links_mode', 'links_only'),
-                    
                     # 增强过滤 - 独立的增强过滤设置
-                    'enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled', channel_filters.get('links_removal', False)),
-                    'enhanced_filter_mode': channel_filters.get('enhanced_filter_mode', channel_filters.get('links_removal_mode', 'moderate')) if channel_filters.get('enhanced_filter_mode', channel_filters.get('links_removal_mode', 'moderate')) in ['aggressive', 'moderate', 'conservative'] else 'moderate',
+                    'enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled', False),
+                    'enhanced_filter_mode': channel_filters.get('enhanced_filter_mode', 'moderate'),
                     
                     # 调试日志
                     '_debug_enhanced_filter_enabled': channel_filters.get('enhanced_filter_enabled'),
-                    '_debug_links_removal': channel_filters.get('links_removal'),
+                    '_debug_links_removal': channel_filters.get('links_removal'), # Keep this for debugging original links_removal
                     
                     # 用户名移除
                     'remove_usernames': channel_filters.get('remove_usernames', channel_filters.get('usernames_removal', False)),
