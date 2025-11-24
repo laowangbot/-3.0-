@@ -127,12 +127,9 @@ ENHANCED_FILTER_BUTTONS = [
     [("🔙 返回功能配置", "show_feature_config_menu")]
 ]
 
-# ==================== 链接过滤按钮布局 ====================
-LINK_FILTER_BUTTONS = [
-    [("🔗 过滤所有链接: {links_status}", "toggle_remove_all_links")],
-    [("🔧 过滤方式: {mode_text}", "toggle_remove_links_mode")],
-    [("🔙 返回功能设定", "show_feature_config_menu")]
-]
+# ==================== 链接过滤按钮布局已移除 ====================
+# 链接过滤功能已合并至增强过滤
+
 
 
 

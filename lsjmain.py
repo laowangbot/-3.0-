@@ -3100,10 +3100,7 @@ class TelegramBot:
             elif data == "show_frequency_settings":
                 await self._handle_show_frequency_settings(callback_query)
             # 评论相关回调处理已移除
-            elif data.startswith("toggle_remove_all_links"):
-                await self._handle_toggle_remove_all_links(callback_query)
-            elif data.startswith("toggle_remove_links_mode"):
-                await self._handle_toggle_remove_links_mode(callback_query)
+            # 链接过滤回调已移除
             elif data.startswith("toggle_remove_hashtags"):
                 await self._handle_toggle_remove_hashtags(callback_query)
             elif data.startswith("toggle_remove_usernames"):
@@ -3138,8 +3135,7 @@ class TelegramBot:
                 await self._handle_set_tail_frequency(callback_query)
             elif data.startswith("set_button_frequency:"):
                 await self._handle_set_button_frequency(callback_query)
-            elif data == "show_link_filter_menu":
-                await self._handle_show_link_filter_menu(callback_query)
+            # 链接过滤菜单已移除
             elif data == "show_enhanced_filter_menu":
                 await self._handle_show_enhanced_filter_menu(callback_query)
             elif data == "toggle_enhanced_filter":

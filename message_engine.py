@@ -552,22 +552,10 @@ class MessageEngine:
         
         # 链接处理
         # 如果增强过滤已经处理了链接，这里可以跳过，或者作为备用
-        if effective_config.get('remove_links', False) and not should_apply_enhanced_filter: # Only run if enhanced filter didn't run for links
-            logger.info(f"🔍 检查链接过滤: mode={effective_config.get('remove_links_mode')}")
-            if effective_config.get('remove_links_mode') == 'remove_message':
-                # 移除整条消息
-                if self.http_pattern.search(processed_text):
-                    logger.info("❌ 发现HTTP链接，移除整条消息")
-                    return None, True
-                logger.info("✅ 链接过滤检查通过")
-            else:
-                # 移除链接和包含超链接的文字
-                logger.info("🔧 智能移除链接和上下文")
-                processed_text = self._remove_links_with_context(processed_text)
-                modified = True
-                logger.info(f"🔧 链接移除后文本: '{processed_text[:100]}...' (长度: {len(processed_text)})")
-        else:
-            logger.info("✅ 链接过滤未启用或已由增强过滤处理")
+        # 链接处理
+        # 链接过滤现在完全由增强过滤器控制
+        # 如果需要过滤链接，请启用增强过滤器
+        logger.info("✅ 链接过滤已合并至增强过滤器")
         
         # 磁力链接处理
         if effective_config.get('remove_magnet_links', False):
