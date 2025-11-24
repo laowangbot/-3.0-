@@ -557,27 +557,8 @@ class MessageEngine:
         # 如果需要过滤链接，请启用增强过滤器
         logger.info("✅ 链接过滤已合并至增强过滤器")
         
-        # 磁力链接处理
-        if effective_config.get('remove_magnet_links', False):
-            if effective_config.get('remove_links_mode') == 'remove_message':
-                if self.magnet_pattern.search(processed_text):
-                    logger.info("发现磁力链接，移除整条消息")
-                    return None, True
-            else:
-                processed_text = self._remove_magnet_links_with_context(processed_text)
-                modified = True
-        
-        # 移除所有链接
-        if effective_config.get('remove_all_links', False):
-            if effective_config.get('remove_links_mode') == 'remove_message':
-                if (self.http_pattern.search(processed_text) or 
-                    self.magnet_pattern.search(processed_text)):
-                    logger.info("发现链接，移除整条消息")
-                    return None, True
-            else:
-                # 使用智能移除方法处理所有类型的链接
-                processed_text = self._remove_all_links_with_context(processed_text)
-                modified = True
+        # 磁力链接和所有链接过滤已合并至增强过滤器
+        # 这里的旧逻辑已移除
         
         # Hashtag处理
         if effective_config.get('remove_hashtags', False):
